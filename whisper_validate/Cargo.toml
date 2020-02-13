@@ -11,7 +11,7 @@ whisper = { path = "../whisper" }
 whisper_ir = { path = "../whisper_ir" }
 failure = "0.1.6"
 serde = "1.0"
-serde_json = { git = "https://github.com/sdleffler/json" }
+serde_json = "1.0.48"
 serde-transcode = "1.1.0"
 
 [dev-dependencies]

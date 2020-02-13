@@ -27,7 +27,7 @@ proc-macro2 = "1.0.8"
 codemap = "0.1.2"
 codemap-diagnostic = "0.1.1"
 ordered-float = "1.0.2"
-serde_json = { git = "https://github.com/sdleffler/json" }
+serde_json = "1.0.48"
 
 [build-dependencies]
 lalrpop = "0.17.2"
@@ -35,4 +35,4 @@ lalrpop = "0.17.2"
 [dev-dependencies]
 whisper_derive = { path = "../whisper_derive" }
 whisper = { path = "../whisper" }
-egress = { git = "https://github.com/sdleffler/egress", branch = "serde-json-patch" }
+egress = "0.1.1"

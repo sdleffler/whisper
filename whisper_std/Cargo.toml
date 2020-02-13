@@ -14,7 +14,7 @@ lazy_static = "1.4.0"
 whisper_ir = { path = "../whisper_ir" }
 im = "14.2.0"
 serde = "1.0.104"
-serde_json = { git = "https://github.com/sdleffler/json" }
+serde_json = "1.0.48"
 serde-transcode = "1.1.0"
 
 [build-dependencies]

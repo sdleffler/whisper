@@ -28,7 +28,7 @@ whisper_ir = { path = "../whisper_ir" }
 whisper_schema = { path = "../whisper_schema" }
 
 [dev-dependencies]
-egress = { git = "https://github.com/sdleffler/egress", branch = "serde-json-patch" }
+egress = "0.1.1"
 
 [build-dependencies]
 lalrpop = "0.17.2"
