@@ -1,0 +1,75 @@
+{
+  "tests/nested_modules.wh (as modules)$MOD": {
+    "Json": {
+      "entries": [
+        {
+          "body": [
+            {
+              "args": [
+                {
+                  "Const": "try"
+                },
+                {
+                  "Ref": {
+                    "args": [
+                      {
+                        "Const": "PUBLIC::fubar"
+                      }
+                    ],
+                    "kind": "Struct"
+                  }
+                },
+                {
+                  "Const": "mod$MOD::foo"
+                }
+              ],
+              "kind": "Opaque"
+            }
+          ],
+          "head": {
+            "args": [
+              {
+                "Const": "PUBLIC::fubar"
+              }
+            ],
+            "kind": "Struct"
+          }
+        },
+        {
+          "body": [
+            {
+              "args": [
+                {
+                  "Const": "try"
+                },
+                {
+                  "Ref": {
+                    "args": [
+                      {
+                        "Const": "PUBLIC::fubar"
+                      }
+                    ],
+                    "kind": "Struct"
+                  }
+                },
+                {
+                  "Const": "mod$MOD::foo::bar::baz"
+                }
+              ],
+              "kind": "Opaque"
+            }
+          ],
+          "head": {
+            "args": [
+              {
+                "Const": "PUBLIC::rabuf"
+              }
+            ],
+            "kind": "Struct"
+          }
+        }
+      ],
+      "root": "tests/nested_modules.wh (as modules)$MOD"
+    }
+  }
+}

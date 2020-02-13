@@ -1,0 +1,2 @@
+root = 'C:\Users\sean\Projects\runecall\whisper_ir'
+artifact_dir = 'egress/artifacts/'

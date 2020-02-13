@@ -1,0 +1,15 @@
+mod member {
+    X is_member_of [X|Xs];
+    X is_member_of [Y|Ys] if X is_member_of Ys;
+}
+
+mod append {
+    []     appended_to Y gives Y;
+    [X|Xs] appended_to Y gives [X|Output] if
+        Xs appended_to Y gives Output;
+}
+
+mod prefix {
+    Xs is_prefix_of Ys if
+        Xs appended_to _ gives Ys in super::append;
+}

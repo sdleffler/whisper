@@ -1,0 +1,21 @@
+[package]
+name = "whisper_schema"
+version = "0.1.0"
+authors = ["Sean Leffler <sean@errno.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+whisper_derive = { path = "../whisper_derive" }
+whisper_ir = { path = "../whisper_ir" }
+typed-arena = "2.0.1"
+ordered-float = "1.0.2"
+failure = "0.1.6"
+derive_more = "0.99.2"
+serde = "1.0.104"
+im = "14.2.0"
+void = "1.0.2"
+
+[dev-dependencies]
+bincode = "1.2.1"

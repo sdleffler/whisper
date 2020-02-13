@@ -1,0 +1,21 @@
+[package]
+name = "whisper_validate"
+version = "0.1.0"
+authors = ["Sean Leffler <sean@errno.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+whisper = { path = "../whisper" }
+whisper_ir = { path = "../whisper_ir" }
+failure = "0.1.6"
+serde = "1.0.104"
+serde_json = { path = "../json" }
+serde-transcode = "1.1.0"
+
+[dev-dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { path = "../json" }
+serde-transcode = "1.1.0"
+toml = "0.5.6"

@@ -1,0 +1,234 @@
+{
+  "tests/super_scopes.wh": {
+    "Json": {
+      "modules": [
+        {
+          "entries": [],
+          "root": "mod$MOD"
+        },
+        {
+          "entries": [
+            {
+              "body": [],
+              "head": {
+                "args": [
+                  {
+                    "Var": "X"
+                  },
+                  {
+                    "Const": "PUBLIC::is_member_of"
+                  },
+                  {
+                    "Ref": {
+                      "args": [
+                        {
+                          "Var": "X"
+                        },
+                        {
+                          "Var": "Xs"
+                        }
+                      ],
+                      "kind": "Cons"
+                    }
+                  }
+                ],
+                "kind": "Struct"
+              }
+            },
+            {
+              "body": [
+                {
+                  "args": [
+                    {
+                      "Var": "X"
+                    },
+                    {
+                      "Const": "PUBLIC::is_member_of"
+                    },
+                    {
+                      "Var": "Ys"
+                    }
+                  ],
+                  "kind": "Struct"
+                }
+              ],
+              "head": {
+                "args": [
+                  {
+                    "Var": "X"
+                  },
+                  {
+                    "Const": "PUBLIC::is_member_of"
+                  },
+                  {
+                    "Ref": {
+                      "args": [
+                        {
+                          "Var": "Y"
+                        },
+                        {
+                          "Var": "Ys"
+                        }
+                      ],
+                      "kind": "Cons"
+                    }
+                  }
+                ],
+                "kind": "Struct"
+              }
+            }
+          ],
+          "root": "member$MOD"
+        },
+        {
+          "entries": [
+            {
+              "body": [],
+              "head": {
+                "args": [
+                  {
+                    "Const": "list_nil$INTERNAL"
+                  },
+                  {
+                    "Const": "PUBLIC::appended_to"
+                  },
+                  {
+                    "Var": "Y"
+                  },
+                  {
+                    "Const": "PUBLIC::gives"
+                  },
+                  {
+                    "Var": "Y"
+                  }
+                ],
+                "kind": "Struct"
+              }
+            },
+            {
+              "body": [
+                {
+                  "args": [
+                    {
+                      "Var": "Xs"
+                    },
+                    {
+                      "Const": "PUBLIC::appended_to"
+                    },
+                    {
+                      "Var": "Y"
+                    },
+                    {
+                      "Const": "PUBLIC::gives"
+                    },
+                    {
+                      "Var": "Output"
+                    }
+                  ],
+                  "kind": "Struct"
+                }
+              ],
+              "head": {
+                "args": [
+                  {
+                    "Ref": {
+                      "args": [
+                        {
+                          "Var": "X"
+                        },
+                        {
+                          "Var": "Xs"
+                        }
+                      ],
+                      "kind": "Cons"
+                    }
+                  },
+                  {
+                    "Const": "PUBLIC::appended_to"
+                  },
+                  {
+                    "Var": "Y"
+                  },
+                  {
+                    "Const": "PUBLIC::gives"
+                  },
+                  {
+                    "Ref": {
+                      "args": [
+                        {
+                          "Var": "X"
+                        },
+                        {
+                          "Var": "Output"
+                        }
+                      ],
+                      "kind": "Cons"
+                    }
+                  }
+                ],
+                "kind": "Struct"
+              }
+            }
+          ],
+          "root": "append$MOD"
+        },
+        {
+          "entries": [
+            {
+              "body": [
+                {
+                  "args": [
+                    {
+                      "Const": "try"
+                    },
+                    {
+                      "Ref": {
+                        "args": [
+                          {
+                            "Var": "Xs"
+                          },
+                          {
+                            "Const": "PUBLIC::appended_to"
+                          },
+                          {
+                            "Var": "_"
+                          },
+                          {
+                            "Const": "PUBLIC::gives"
+                          },
+                          {
+                            "Var": "Ys"
+                          }
+                        ],
+                        "kind": "Struct"
+                      }
+                    },
+                    {
+                      "Const": "prefix$MOD::super::append"
+                    }
+                  ],
+                  "kind": "Opaque"
+                }
+              ],
+              "head": {
+                "args": [
+                  {
+                    "Var": "Xs"
+                  },
+                  {
+                    "Const": "PUBLIC::is_prefix_of"
+                  },
+                  {
+                    "Var": "Ys"
+                  }
+                ],
+                "kind": "Struct"
+              }
+            }
+          ],
+          "root": "prefix$MOD"
+        }
+      ]
+    }
+  }
+}

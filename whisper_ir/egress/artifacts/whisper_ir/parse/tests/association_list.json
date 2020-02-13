@@ -1,0 +1,94 @@
+{
+  "{ (fiddle dee): bar, baz: 3 }": {
+    "Json": {
+      "args": [
+        {
+          "Ref": {
+            "args": [
+              {
+                "Ref": {
+                  "args": [
+                    {
+                      "Const": "PUBLIC::fiddle"
+                    },
+                    {
+                      "Const": "PUBLIC::dee"
+                    }
+                  ],
+                  "kind": "Struct"
+                }
+              },
+              {
+                "Const": "PUBLIC::bar"
+              },
+              {
+                "Ref": {
+                  "args": [
+                    {
+                      "Const": "PUBLIC::baz"
+                    },
+                    {
+                      "Int32": 3
+                    },
+                    {
+                      "Const": "map_nil$INTERNAL"
+                    }
+                  ],
+                  "kind": "Cons2"
+                }
+              }
+            ],
+            "kind": "Cons2"
+          }
+        }
+      ],
+      "kind": "Struct"
+    }
+  },
+  "{ foo: bar, baz: quux | Rest }": {
+    "Json": {
+      "args": [
+        {
+          "Ref": {
+            "args": [
+              {
+                "Const": "PUBLIC::foo"
+              },
+              {
+                "Const": "PUBLIC::bar"
+              },
+              {
+                "Ref": {
+                  "args": [
+                    {
+                      "Const": "PUBLIC::baz"
+                    },
+                    {
+                      "Const": "PUBLIC::quux"
+                    },
+                    {
+                      "Var": "Rest"
+                    }
+                  ],
+                  "kind": "Cons2"
+                }
+              }
+            ],
+            "kind": "Cons2"
+          }
+        }
+      ],
+      "kind": "Struct"
+    }
+  },
+  "{}": {
+    "Json": {
+      "args": [
+        {
+          "Const": "map_nil$INTERNAL"
+        }
+      ],
+      "kind": "Struct"
+    }
+  }
+}

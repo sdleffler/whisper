@@ -1,0 +1,14 @@
+mod foo {
+    mod bar {
+        mod baz {
+            fubar;
+        }
+
+        fubar if fubar in baz;
+    }
+
+    fubar if fubar in bar;
+}
+
+fubar if fubar in foo;
+rabuf if fubar in <foo::bar::baz>;

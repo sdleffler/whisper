@@ -1,0 +1,20 @@
+mod contains {
+    {K: V | KVs} contains_key K with_value V;
+    {_: _ | KVs} contains_key K with_value V if
+        KVs contains_key K with_value V;
+}
+
+mod without {
+    {K: V | KVs} without_key K with_value V gives KVs;
+    {L: Q | LQs} without_key K with_value V gives {L: Q | KVs} if
+        LQs without_key K with_value V gives KVs in self;
+}
+
+mod match {
+    {K: V | KVs} matches OtherKVs if
+        KVs matches KVs_ in self,
+        K matches K_ in self,
+        V matches V_ in self,
+        OtherKVs without_key K_ with_value V_ gives KVs_ in super::without;
+    X matches X;
+}

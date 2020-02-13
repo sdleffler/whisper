@@ -1,0 +1,11 @@
+[workspace]
+members = {
+    "whisper",
+    "whisper_codegen",
+    "whisper_derive",
+    "whisper_ir",
+    "whisper_schema",
+    "whisper_std",
+    "whisper_util",
+    "whisper_validate",
+}

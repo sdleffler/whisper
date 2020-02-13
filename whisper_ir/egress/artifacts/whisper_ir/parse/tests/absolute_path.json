@@ -1,0 +1,28 @@
+{
+  "<abc::def>": {
+    "Json": {
+      "Const": "PUBLIC::abc::def"
+    }
+  },
+  "<abc>": {
+    "Json": {
+      "Const": "PUBLIC::abc"
+    }
+  },
+  "valid_field <otherwise> <true>": {
+    "Json": {
+      "args": [
+        {
+          "Const": "PUBLIC::valid_field"
+        },
+        {
+          "Const": "PUBLIC::otherwise"
+        },
+        {
+          "Const": "PUBLIC::true"
+        }
+      ],
+      "kind": "Struct"
+    }
+  }
+}

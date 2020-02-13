@@ -1,0 +1,23 @@
+[package]
+name = "whisper_derive"
+version = "0.1.0"
+authors = ["Sean Leffler <sean@errno.com>"]
+edition = "2018"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = "1.0.14"
+quote = "1.0.2"
+proc-macro2 = "1.0.8"
+itertools = "0.8.2"
+im = "14.2.0"
+lazy_static = "1.4.0"
+string_cache_codegen = "0.5.1"
+proc-macro-crate = "0.1.4"
+whisper_ir = { path = "../whisper_ir" }
+
+[dev-dependencies]
+whisper = { path = "../whisper" }
+failure = "0.1.6"

@@ -1,0 +1,15 @@
+[package]
+name = "whisper_util"
+version = "0.1.0"
+authors = ["Sean Leffler <sean@errno.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+whisper = { path = "../whisper" }
+whisper_ir = { path = "../whisper_ir" }
+failure = "0.1.6"
+derive_more = "0.99.2"
+bincode = "1.2.1"
+structopt = "0.3.9"

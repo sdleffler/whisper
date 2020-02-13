@@ -1,0 +1,437 @@
+use crate::{
+    heap::{Heap, SerializedHeap, SerializedSymbol},
+    maybe_shared::MaybeShared,
+    word::{Tag, Word},
+    Symbol, SymbolIndex, SymbolTable,
+};
+
+use ::{
+    im::HashMap as ImHashMap,
+    roaring::RoaringBitmap,
+    serde::{Deserialize, Serialize},
+    smallvec::SmallVec,
+    std::{
+        collections::HashMap,
+        ops::{Deref, Index, Range},
+        rc::Rc,
+    },
+};
+
+#[derive(Debug, Clone, Copy)]
+pub struct RelationId(usize);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Relation {
+    pub start: Word,
+    pub end: usize,
+    pub neck: usize,
+    pub goals: SmallVec<[Word; 4]>,
+}
+
+impl Relation {
+    /// Get the length of the slice containing the entirety of the relation.
+    /// This is just a convenient shorthand for `self.end - self.start`.
+    pub fn len(&self) -> usize {
+        self.end - self.start.get_address()
+    }
+
+    /// Get the length of the slice containing the head of the relation. This
+    /// is really just convenient shorthand for `self.neck - self.start`.
+    pub fn head_len(&self) -> usize {
+        self.neck - self.start.get_address()
+    }
+
+    /// Get the length of the slice containing the body of the relation. This
+    /// is really just convenient shorthand for `self.end - self.neck`.
+    pub fn body_len(&self) -> usize {
+        self.end - self.neck
+    }
+}
+
+pub type MatchesStorage = SmallVec<[RelationId; 4]>;
+
+#[derive(Debug, Clone)]
+pub struct Matches {
+    ids: MatchesStorage,
+    index: usize,
+}
+
+impl Matches {
+    pub fn new(storage: MatchesStorage) -> Self {
+        Self {
+            ids: storage,
+            index: 0,
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            ids: MatchesStorage::new(),
+            index: 0,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.index >= self.ids.len()
+    }
+
+    pub fn cut(&mut self) {
+        self.index = self.ids.len();
+    }
+}
+
+impl Iterator for Matches {
+    type Item = RelationId;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.ids.len() {
+            let id = self.ids[self.index];
+            self.index += 1;
+            Some(id)
+        } else {
+            None
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let size = self.len();
+        (size, Some(size))
+    }
+}
+
+impl ExactSizeIterator for Matches {
+    fn len(&self) -> usize {
+        self.ids.len() - self.index
+    }
+}
+
+pub type SharedModule = Rc<Module>;
+
+#[derive(Debug, Clone)]
+pub struct Module {
+    heap: Heap,
+    const_sets: HashMap<(usize, Word), RoaringBitmap>,
+    var_sets: Vec<RoaringBitmap>,
+    relations: Vec<Relation>,
+    name: Symbol,
+}
+
+impl Index<RelationId> for Module {
+    type Output = Relation;
+
+    fn index(&self, idx: RelationId) -> &Self::Output {
+        &self.relations[idx.0]
+    }
+}
+
+impl Index<Range<usize>> for Module {
+    type Output = [Word];
+
+    fn index(&self, range: Range<usize>) -> &Self::Output {
+        &self.heap[range]
+    }
+}
+
+impl Deref for Module {
+    type Target = Heap;
+
+    fn deref(&self) -> &Self::Target {
+        &self.heap
+    }
+}
+
+impl Module {
+    pub fn get_name(&self) -> &Symbol {
+        &self.name
+    }
+
+    pub fn from_mapped_heap(name: Symbol, heap: Heap, relations: Vec<Relation>) -> Self {
+        // println!("Building knowledge base from heap...");
+
+        let mut const_sets = HashMap::new();
+        let mut var_sets = Vec::new();
+
+        for (relation_idx, relation) in relations.iter().enumerate() {
+            let arity = heap[relation.start.get_address()].get_value() as usize;
+            let base = relation.start.get_address() + 1;
+            let mut buf = SmallVec::<[Word; 32]>::with_capacity(arity);
+            for p in base..base + arity {
+                buf.push(heap[p].generalize(&heap));
+            }
+
+            if var_sets.len() < buf.len() {
+                var_sets.resize_with(buf.len(), || RoaringBitmap::new());
+            }
+
+            let relation_idx = relation_idx as u32;
+            for (i, &w) in buf.iter().enumerate() {
+                if w.is_indexable() {
+                    const_sets
+                        .entry((i, w))
+                        .or_insert_with(RoaringBitmap::new)
+                        .insert(relation_idx);
+                } else if w.get_tag() == Tag::Var {
+                    var_sets[i].insert(relation_idx);
+                }
+            }
+        }
+
+        Self {
+            heap: heap.into(),
+            const_sets,
+            var_sets,
+            relations,
+            name,
+        }
+    }
+
+    pub fn search(&self, heap: &Heap, head_ref: Word) -> Matches {
+        // println!(
+        //     "Searching knowledge base for matches against head `{}`. ",
+        //     heap.display_word(head_ref)
+        // );
+
+        let head_addr = head_ref.get_address();
+        let arity = heap[head_addr].get_value() as usize;
+        let base = head_addr + 1;
+        let mut buf = SmallVec::<[Word; 32]>::with_capacity(arity);
+        for p in base..base + arity {
+            buf.push(heap.chase(heap[p]).generalize(&heap));
+        }
+
+        // Look for the first word that's indexable
+        let mut primary_idx = 0;
+        let primary_set = loop {
+            let idx = primary_idx;
+            match buf.get(idx) {
+                Some(&word) => {
+                    primary_idx += 1;
+                    if word.is_indexable() {
+                        if let Some(sets) = self.const_sets.get(&(idx, word)) {
+                            // println!("Indexable word found: {}", heap.display_word(word));
+                            break sets.iter().chain(self.var_sets[idx].iter());
+                        }
+                    }
+                }
+                None => {
+                    let matches = (0..self.relations.len())
+                        .map(RelationId)
+                        .collect::<MatchesStorage>(); // This could match anything... collect *all* relations!
+                    return Matches::new(matches);
+                }
+            };
+        };
+
+        let mut indices = MatchesStorage::new();
+        'matching: for candidate in primary_set {
+            // println!("Candidate {}", candidate);
+
+            'checking: for pos in primary_idx..buf.len() {
+                let w = buf[pos];
+                if !w.is_indexable() {
+                    continue 'checking;
+                } else {
+                    if let Some(set) = self.const_sets.get(&(pos, w)) {
+                        if set.contains(candidate) {
+                            continue 'checking;
+                        }
+                    }
+
+                    if let Some(set) = self.var_sets.get(pos) {
+                        if set.contains(candidate) {
+                            continue 'checking;
+                        }
+                    }
+
+                    continue 'matching;
+                }
+            }
+
+            indices.push(RelationId(candidate as usize));
+
+            // println!("Match: {:?}", &self.relations[candidate as usize]);
+        }
+
+        // println!("{} matches found: {:?}", indices.len(), indices);
+
+        Matches::new(indices)
+    }
+}
+
+pub type SharedKnowledgeBase = MaybeShared<'static, KnowledgeBase>;
+
+#[derive(Debug, Clone)]
+pub struct KnowledgeBase {
+    symbols: SymbolTable,
+    modules: ImHashMap<SymbolIndex, SharedModule>,
+}
+
+impl KnowledgeBase {
+    pub fn new(symbols: SymbolTable) -> Self {
+        Self {
+            symbols,
+            modules: ImHashMap::new(),
+        }
+    }
+
+    pub fn symbol_table(&self) -> &SymbolTable {
+        &self.symbols
+    }
+
+    pub fn get(&self, idx: SymbolIndex) -> Option<&SharedModule> {
+        self.modules.get(&idx)
+    }
+
+    pub fn get_root(&self) -> &SharedModule {
+        self.get(Symbol::MOD_INDEX).unwrap()
+    }
+
+    pub fn insert(&mut self, module: impl Into<SharedModule>) {
+        let module = module.into();
+        assert_eq!(self.symbols, module.heap.symbols);
+        let index = self.symbols.resolve(&module.name);
+        self.modules.insert(index, module);
+    }
+
+    pub fn import_serialized(&mut self, name: &Symbol, kb: &SerializedKnowledgeBase) {
+        for ser_module in &kb.modules {
+            let module = ser_module.into_module_with_root(self.symbols.clone(), name);
+            //println!("Importing: {}", self.symbols.normalize_full(&module.name));
+            self.insert(module);
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &SharedModule> {
+        self.modules.values()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedModule {
+    heap: SerializedHeap,
+    const_sets: Vec<(usize, Word, Vec<u8>)>,
+    var_sets: Vec<Vec<u8>>,
+    relations: Vec<Relation>,
+    name: SerializedSymbol,
+}
+
+impl SerializedModule {
+    pub fn from_module(module: &Module) -> Self {
+        let heap = SerializedHeap::from_heap(&module.heap);
+
+        let const_sets = module
+            .const_sets
+            .iter()
+            .map(|((idx, word), bitset)| {
+                let mut bytes = Vec::new();
+                bitset
+                    .serialize_into(&mut bytes)
+                    .expect("cannot fail to write to `Vec`");
+
+                (*idx, *word, bytes)
+            })
+            .collect();
+
+        let var_sets = module
+            .var_sets
+            .iter()
+            .map(|bitset| {
+                let mut bytes = Vec::new();
+                bitset
+                    .serialize_into(&mut bytes)
+                    .expect("cannot fail to write to `Vec`");
+
+                bytes
+            })
+            .collect();
+
+        let relations = module.relations.clone();
+        let name = SerializedSymbol::from_symbol(&module.heap.symbols, &module.name);
+
+        Self {
+            heap,
+            const_sets,
+            var_sets,
+            relations,
+            name,
+        }
+    }
+
+    pub fn into_module_with_root(&self, symbols: SymbolTable, root: &Symbol) -> Module {
+        let const_sets = self
+            .const_sets
+            .iter()
+            .map(|(idx, word, bytes)| {
+                let mut word = *word;
+                if word.get_tag() == Tag::Const {
+                    let sym_index = symbols.resolve(
+                        self.heap.symbols[&word.get_value()]
+                            .into_name_with_root_module(&symbols, root),
+                    );
+                    word = Word::r#const(sym_index);
+                }
+
+                (
+                    (*idx, word),
+                    RoaringBitmap::deserialize_from(&mut &bytes[..])
+                        .expect("cannot fail to read from `Vec`"),
+                )
+            })
+            .collect();
+
+        let var_sets = self
+            .var_sets
+            .iter()
+            .map(|bytes| {
+                RoaringBitmap::deserialize_from(&mut &bytes[..])
+                    .expect("cannot fail to read from `Vec`")
+            })
+            .collect();
+
+        let relations = self.relations.clone();
+        let name = self.name.into_symbol_with_root_module(&symbols, root);
+        let heap = self.heap.into_heap_with_root_module(symbols, root);
+
+        Module {
+            heap,
+            const_sets,
+            var_sets,
+            relations,
+            name,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SerializedKnowledgeBase {
+    modules: Vec<SerializedModule>,
+}
+
+impl SerializedKnowledgeBase {
+    pub fn from_knowledge_base(knowledge_base: &KnowledgeBase) -> Self {
+        Self {
+            modules: knowledge_base
+                .modules
+                .values()
+                .map(|module| SerializedModule::from_module(&*module))
+                .collect(),
+        }
+    }
+
+    pub fn into_knowledge_base_with_root(
+        &self,
+        symbols: SymbolTable,
+        root: &Symbol,
+    ) -> KnowledgeBase {
+        let modules = self
+            .modules
+            .iter()
+            .map(|module| {
+                let module = module.into_module_with_root(symbols.clone(), root);
+                (symbols.resolve(&module.name), SharedModule::from(module))
+            })
+            .collect();
+
+        KnowledgeBase { symbols, modules }
+    }
+}

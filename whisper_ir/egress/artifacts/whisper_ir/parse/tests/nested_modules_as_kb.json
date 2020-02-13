@@ -1,0 +1,171 @@
+{
+  "tests/nested_modules.wh (as knowledge base)": {
+    "Json": {
+      "modules": [
+        {
+          "entries": [
+            {
+              "body": [
+                {
+                  "args": [
+                    {
+                      "Const": "try"
+                    },
+                    {
+                      "Ref": {
+                        "args": [
+                          {
+                            "Const": "PUBLIC::fubar"
+                          }
+                        ],
+                        "kind": "Struct"
+                      }
+                    },
+                    {
+                      "Const": "mod$MOD::foo"
+                    }
+                  ],
+                  "kind": "Opaque"
+                }
+              ],
+              "head": {
+                "args": [
+                  {
+                    "Const": "PUBLIC::fubar"
+                  }
+                ],
+                "kind": "Struct"
+              }
+            },
+            {
+              "body": [
+                {
+                  "args": [
+                    {
+                      "Const": "try"
+                    },
+                    {
+                      "Ref": {
+                        "args": [
+                          {
+                            "Const": "PUBLIC::fubar"
+                          }
+                        ],
+                        "kind": "Struct"
+                      }
+                    },
+                    {
+                      "Const": "mod$MOD::foo::bar::baz"
+                    }
+                  ],
+                  "kind": "Opaque"
+                }
+              ],
+              "head": {
+                "args": [
+                  {
+                    "Const": "PUBLIC::rabuf"
+                  }
+                ],
+                "kind": "Struct"
+              }
+            }
+          ],
+          "root": "mod$MOD"
+        },
+        {
+          "entries": [
+            {
+              "body": [
+                {
+                  "args": [
+                    {
+                      "Const": "try"
+                    },
+                    {
+                      "Ref": {
+                        "args": [
+                          {
+                            "Const": "PUBLIC::fubar"
+                          }
+                        ],
+                        "kind": "Struct"
+                      }
+                    },
+                    {
+                      "Const": "mod$MOD::bar"
+                    }
+                  ],
+                  "kind": "Opaque"
+                }
+              ],
+              "head": {
+                "args": [
+                  {
+                    "Const": "PUBLIC::fubar"
+                  }
+                ],
+                "kind": "Struct"
+              }
+            }
+          ],
+          "root": "foo$MOD"
+        },
+        {
+          "entries": [
+            {
+              "body": [
+                {
+                  "args": [
+                    {
+                      "Const": "try"
+                    },
+                    {
+                      "Ref": {
+                        "args": [
+                          {
+                            "Const": "PUBLIC::fubar"
+                          }
+                        ],
+                        "kind": "Struct"
+                      }
+                    },
+                    {
+                      "Const": "mod$MOD::baz"
+                    }
+                  ],
+                  "kind": "Opaque"
+                }
+              ],
+              "head": {
+                "args": [
+                  {
+                    "Const": "PUBLIC::fubar"
+                  }
+                ],
+                "kind": "Struct"
+              }
+            }
+          ],
+          "root": "bar$4"
+        },
+        {
+          "entries": [
+            {
+              "body": [],
+              "head": {
+                "args": [
+                  {
+                    "Const": "PUBLIC::fubar"
+                  }
+                ],
+                "kind": "Struct"
+              }
+            }
+          ],
+          "root": "baz$5"
+        }
+      ]
+    }
+  }
+}

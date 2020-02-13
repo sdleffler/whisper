@@ -1,0 +1,10 @@
+trude is_mother_of sally.
+ 
+tom  is_father_of sally.
+tom  is_father_of erica.
+mike is_father_of tom.
+ 
+X is_sibling_of Y if Z is_parent_of X, Z is_parent_of Y.
+ 
+X is_parent_of Y if X is_father_of Y.
+X is_parent_of Y if X is_mother_of Y.
