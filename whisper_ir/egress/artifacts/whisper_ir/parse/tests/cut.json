@@ -1,0 +1,79 @@
+{
+  "tests/cut.wh": {
+    "Json": {
+      "modules": [
+        {
+          "entries": [
+            {
+              "body": [
+                {
+                  "args": [
+                    {
+                      "Const": "PUBLIC::thing"
+                    },
+                    {
+                      "Var": "Bar"
+                    }
+                  ],
+                  "kind": "Struct"
+                },
+                {
+                  "args": [
+                    {
+                      "Ref": {
+                        "args": [
+                          {
+                            "Const": "cut"
+                          }
+                        ],
+                        "kind": "Opaque"
+                      }
+                    }
+                  ],
+                  "kind": "Struct"
+                },
+                {
+                  "args": [
+                    {
+                      "Const": "PUBLIC::thing"
+                    },
+                    {
+                      "Const": "PUBLIC::baz"
+                    }
+                  ],
+                  "kind": "Struct"
+                },
+                {
+                  "args": [
+                    {
+                      "Const": "PUBLIC::stateful"
+                    },
+                    {
+                      "Const": "PUBLIC::thing"
+                    }
+                  ],
+                  "kind": "Extern"
+                }
+              ],
+              "head": {
+                "args": [
+                  {
+                    "Const": "PUBLIC::foo"
+                  },
+                  {
+                    "Var": "Bar"
+                  },
+                  {
+                    "Const": "PUBLIC::baz"
+                  }
+                ],
+                "kind": "Struct"
+              }
+            }
+          ],
+          "root": "mod$MOD"
+        }
+      ]
+    }
+  }
+}

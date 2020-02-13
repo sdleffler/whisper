@@ -1,0 +1,5 @@
+
+foo Bar baz if
+    thing Bar, !, // CUUUUT!
+    thing baz,
+    stateful thing in extern;

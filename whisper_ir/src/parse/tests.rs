@@ -138,3 +138,15 @@ fn super_scopes() -> Result<()> {
     egress.close_and_assert_unregressed().unwrap();
     Ok(())
 }
+
+#[test]
+fn cut() -> Result<()> {
+    let mut egress = egress::egress!();
+    let artifact = egress.artifact("cut");
+    let mut ctx = TestContext::new(artifact);
+
+    ctx.parse_kb_artifact("tests/cut.wh", include_str!("tests/cut.wh"))?;
+
+    egress.close_and_assert_unregressed().unwrap();
+    Ok(())
+}

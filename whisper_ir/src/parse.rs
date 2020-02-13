@@ -125,6 +125,10 @@ fn new_try_in(term: IrRef, module: IrNode) -> IrRef {
     })
 }
 
+fn new_cut() -> IrRef {
+    with_graphs(|_, terms| terms.new_opaque(im::vector![IrNode::Const(Symbol::CUT.into())]))
+}
+
 pub(crate) fn set_module(ir_mod: IrModuleRef) {
     MODULE.with(|module| module.replace(Some(ir_mod)));
 }
@@ -162,6 +166,7 @@ fn is_term_start(lookahead: &Lookahead1) -> bool {
         || lookahead.peek(Token![-])
         || lookahead.peek(Bracket)
         || lookahead.peek(Brace)
+        || lookahead.peek(Token![!])
 }
 
 fn is_compound_start(lookahead: &Lookahead1) -> bool {
@@ -331,6 +336,9 @@ impl Parse for IrNode {
                     ),
                 )),
             })
+        } else if lookahead.peek(Token![!]) {
+            input.parse::<Token![!]>()?;
+            Ok(IrNode::Ref(new_cut()))
         } else if lookahead.peek(Token![_]) {
             input.parse::<Token![_]>()?;
             Ok(IrNode::Var(Var::Anonymous))
