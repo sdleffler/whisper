@@ -1,4 +1,4 @@
-**Whisper is very much work-in-progress and still being designed. It is not in any state for contributions (probably?) except maybe by chatting with me cuz that sounds like fun.**
+**Whisper is very much work-in-progress and still being designed. It is not in any state for contributions (probably?) except maybe by chatting with me cuz that sounds like fun. You can chat with me on [Twitter](https://twitter.com/sleffy_), on Discord (sleffy#6314), or by email. That last one's a treasure hunt, I'm sure you can find it.**
 
 # Whisper: a Logic Programming DSL for Rust
 
