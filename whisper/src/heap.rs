@@ -3,7 +3,7 @@ use crate::{
     maybe_shared::MaybeShared,
     trans::HeapReader,
     word::{Address, Tag, UnpackedWord, Word, WordOffset},
-    Atom, Name, Scope, Symbol, SymbolTable,
+    Ident, Name, Scope, Symbol, SymbolTable,
 };
 
 use ::{
@@ -332,7 +332,7 @@ impl SerializedSymbol {
             symbols.get_scope_metadata(scope).name.clone()
         };
 
-        let path = self.path.iter().map(|s| Atom::from(&**s)).collect();
+        let path = self.path.iter().map(|s| Ident::from(&**s)).collect();
         let name = Name { root, path };
 
         //println!("Visiting: {}", symbols.normalize_full(&name));

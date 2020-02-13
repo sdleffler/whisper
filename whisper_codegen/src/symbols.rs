@@ -150,7 +150,8 @@ pub fn reserved_symbols(input: TokenStream) -> TokenStream {
             Module => quote!(Scope::MOD),
         };
 
-        let constant_value = quote!(Symbol::new(#atom_macro!(#constant_name), #constant_id));
+        let constant_value =
+            quote!(Symbol::new(Ident::from_atom(#atom_macro!(#constant_name)), #constant_id));
         symbol_constants.push(quote!(pub const #constant_ident: Symbol = #constant_value;));
 
         let id = symbol_id_list.len();

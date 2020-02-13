@@ -7,10 +7,10 @@ use ::{
     },
     std::{convert::TryInto, iter, marker::PhantomData},
     whisper_ir::{
-        atom,
         graph::Blob,
+        ident,
         trans::{CompoundKind, TermReader, TermVisitor},
-        Atom, Name, Symbol, SymbolTable, Var,
+        Ident, Name, Symbol, SymbolTable, Var,
     },
 };
 
@@ -19,7 +19,7 @@ use crate::serde::{Error as ErrorKind, SerdeCompatError as Error};
 pub struct Data;
 pub enum Datum<R> {
     Var(Var),
-    Const(Atom),
+    Const(Ident),
     Int32(i32),
     UInt32(u32),
     Float32(f32),
@@ -49,7 +49,7 @@ impl<'re, R: TermReader<'re, View = R>> TermVisitor<'re, R> for Data {
             Symbol::FALSE => Datum::Bool(false),
             Symbol::INTERNAL_LIST_NIL => Datum::ListNil,
             Symbol::INTERNAL_MAP_NIL => Datum::MapNil,
-            other => Datum::Const(other.get_atom().clone()),
+            other => Datum::Const(other.ident().clone()),
         }
     }
 
@@ -113,7 +113,7 @@ impl<'de, 're, 'a, T: TermReader<'re>> de::Deserializer<'de> for &'a mut Deseria
         use CompoundKind as Kind;
         match self.reader.read(Data).ok_or(ErrorKind::Invalid)? {
             Datum::Var(_var) => todo!(),
-            Datum::Const(atom) => visitor.visit_enum(atom.into_deserializer()),
+            Datum::Const(ident) => visitor.visit_enum(ident.str_ref().into_deserializer()),
             Datum::Int32(i) => visitor.visit_i32(i),
             Datum::UInt32(u) => visitor.visit_u32(u),
             Datum::Float32(f) => visitor.visit_f32(f),
@@ -134,31 +134,31 @@ impl<'de, 're, 'a, T: TermReader<'re>> de::Deserializer<'de> for &'a mut Deseria
                 match reader.read(Data).ok_or(ErrorKind::Invalid)? {
                     Datum::Var(_var) => todo!(),
 
-                    Datum::Const(atom!("i64")) => {
+                    Datum::Const(ident!("i64")) => {
                         visitor.visit_i64(reader.read_raw().unwrap() as i64)
                     }
-                    Datum::Const(atom!("u64")) => visitor.visit_u64(reader.read_raw().unwrap()),
-                    Datum::Const(atom!("f64")) => {
+                    Datum::Const(ident!("u64")) => visitor.visit_u64(reader.read_raw().unwrap()),
+                    Datum::Const(ident!("f64")) => {
                         visitor.visit_f64(f64::from_bits(reader.read_raw().unwrap()))
                     }
-                    Datum::Const(atom!("char")) => {
+                    Datum::Const(ident!("char")) => {
                         let bits = reader.read_raw().unwrap() as u32;
                         visitor.visit_char(bits.try_into().unwrap())
                     }
-                    Datum::Const(atom!("str")) => {
+                    Datum::Const(ident!("str")) => {
                         match reader.read(Data).ok_or(ErrorKind::Invalid)? {
                             Datum::Blob(blob) => visitor.visit_string(blob.deserialize()),
                             _ => Err(ErrorKind::Invalid)?,
                         }
                     }
-                    Datum::Const(atom!("byte array")) => {
+                    Datum::Const(ident!("byte array")) => {
                         match reader.read(Data).ok_or(ErrorKind::Invalid)? {
                             Datum::Blob(blob) => visitor.visit_bytes(blob.as_bytes()),
                             _ => Err(ErrorKind::Invalid)?,
                         }
                     }
 
-                    Datum::Const(atom!("Some")) => {
+                    Datum::Const(ident!("Some")) => {
                         visitor.visit_some(&mut Deserializer::from_reader(reader))
                     }
 
@@ -317,12 +317,12 @@ impl<'de, 're, R: TermReader<'re, View = R>> SeqAccess<'de> for Tuple<'re, R> {
 
 struct Enum<'re, R: TermReader<'re, View = R>> {
     state: R,
-    tag: Atom,
+    tag: Ident,
     _phantom: PhantomData<&'re ()>,
 }
 
 impl<'re, R: TermReader<'re, View = R>> Enum<'re, R> {
-    fn new(tag: Atom, state: R) -> Self {
+    fn new(tag: Ident, state: R) -> Self {
         Self {
             state,
             tag,
@@ -339,7 +339,7 @@ impl<'de, 're, R: TermReader<'re, View = R>> EnumAccess<'de> for Enum<'re, R> {
     where
         V: DeserializeSeed<'de>,
     {
-        seed.deserialize(self.tag.into_deserializer())
+        seed.deserialize(self.tag.atom().into_deserializer())
             .map(|val| (val, self))
     }
 }

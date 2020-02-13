@@ -16,7 +16,7 @@
 
 use crate::{
     graph::{IrGoal, IrModule, IrModuleEntry, IrNode, IrRef, IrRelation, IrTermGraph},
-    Atom, Name, Scope, Symbol, Var,
+    Ident, Name, Scope, Symbol, Var,
 };
 
 pub trait Visit<'graph> {
@@ -36,7 +36,7 @@ pub trait Visit<'graph> {
         visit_var(self, ir_graph, var);
     }
 
-    fn visit_atom(&mut self, _ir_graph: &'graph IrTermGraph, _atom: &'graph Atom) {}
+    fn visit_ident(&mut self, _ir_graph: &'graph IrTermGraph, _ident: &'graph Ident) {}
     fn visit_scope(&mut self, _ir_graph: &'graph IrTermGraph, _scope: &'graph Scope) {}
     fn visit_int32(&mut self, _ir_graph: &'graph IrTermGraph, _int: &'graph i32) {}
     fn visit_uint32(&mut self, _ir_graph: &'graph IrTermGraph, _int: &'graph u32) {}
@@ -67,7 +67,7 @@ pub fn visit_symbol<'graph, V>(v: &mut V, ir_graph: &'graph IrTermGraph, symbol:
 where
     V: Visit<'graph> + ?Sized,
 {
-    v.visit_atom(ir_graph, symbol.get_atom());
+    v.visit_ident(ir_graph, symbol.ident());
     v.visit_scope(ir_graph, symbol.get_scope_ref());
 }
 
@@ -77,7 +77,7 @@ where
 {
     v.visit_symbol(ir_graph, &name.root);
     for segment in &name.path {
-        v.visit_atom(ir_graph, segment);
+        v.visit_ident(ir_graph, segment);
     }
 }
 
@@ -93,7 +93,7 @@ where
     V: Visit<'graph> + ?Sized,
 {
     match var {
-        Var::Named(atom) => v.visit_atom(ir_graph, atom),
+        Var::Named(ident) => v.visit_ident(ir_graph, ident),
         Var::Anonymous => {}
     }
 }
@@ -123,7 +123,7 @@ where
 {
     match node {
         IrNode::Const(name) => v.visit_const(ir_graph, name),
-        IrNode::Var(atom) => v.visit_var(ir_graph, atom),
+        IrNode::Var(var) => v.visit_var(ir_graph, var),
         IrNode::Int32(i) => v.visit_int32(ir_graph, i),
         IrNode::UInt32(i) => v.visit_uint32(ir_graph, i),
         IrNode::Float32(f) => v.visit_float32(ir_graph, f),

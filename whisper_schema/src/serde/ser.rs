@@ -2,8 +2,8 @@ use ::{
     serde::{ser, Serialize},
     std::iter,
     whisper_ir::{
-        atom,
         graph::Blob,
+        ident,
         trans::{TermEmitter, TermWriter},
     },
 };
@@ -154,7 +154,7 @@ impl<'ser, 'arena, 'w, B: TermWriter> ser::Serializer for &'ser mut Serializer<'
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Error> {
-        Ok(SchemaNode::Const(atom!("None")))
+        Ok(SchemaNode::Const(ident!("None")))
     }
 
     fn serialize_some<T>(self, value: &T) -> Result<Self::Ok, Error>
@@ -166,7 +166,7 @@ impl<'ser, 'arena, 'w, B: TermWriter> ser::Serializer for &'ser mut Serializer<'
     }
 
     fn serialize_unit(self) -> Result<Self::Ok, Error> {
-        Ok(SchemaNode::Const(atom!("()")))
+        Ok(SchemaNode::Const(ident!("()")))
     }
 
     fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok, Error> {

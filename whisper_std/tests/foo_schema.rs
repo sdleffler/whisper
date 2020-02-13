@@ -117,7 +117,7 @@ fn validate_foo() -> Result<(), Error> {
 
     let import_point = schema.0.symbol_table().normalize(Name {
         root: Symbol::MOD,
-        path: im::vector![Atom::from("std"), Atom::from("map")],
+        path: im::vector![Ident::from("std"), Ident::from("map")],
     });
 
     schema

@@ -6,7 +6,7 @@ use ::{
 use whisper_ir::{
     graph::Blob,
     trans::{CompoundKind, TermWriter},
-    Atom, Name, SymbolTable, Var,
+    Ident, Name, SymbolTable, Var,
 };
 
 use crate::{
@@ -19,7 +19,7 @@ use crate::{
 /// pointing at their first occurrence, only if they have already been written
 /// at least once.
 #[derive(Debug, Default)]
-pub struct VarScope(HashMap<Atom, usize>);
+pub struct VarScope(HashMap<Ident, usize>);
 
 impl VarScope {
     pub fn to_query_map(&self) -> QueryMap {

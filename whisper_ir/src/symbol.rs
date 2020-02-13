@@ -72,6 +72,11 @@ whisper_codegen::reserved_symbols! {
     // schema "byteslice",
 }
 
+#[macro_use]
+pub mod ident;
+
+pub use ident::Ident;
+
 #[derive(Debug, Fail)]
 pub enum NameError {
     #[fail(
@@ -113,8 +118,8 @@ impl Scope {
         Scope(id, ptr::null())
     }
 
-    pub fn symbol(&self, atom: impl Into<Atom>) -> Symbol {
-        Symbol::new(atom.into(), *self)
+    pub fn symbol(&self, ident: impl Into<Ident>) -> Symbol {
+        Symbol::new(ident.into(), *self)
     }
 }
 
@@ -133,7 +138,7 @@ impl fmt::Display for Scope {
 /// A scoped identifier.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Symbol {
-    atom: Atom,
+    ident: Ident,
 
     /// An integer ID manipulated to prevent name collisions.
     /// This does have special values! TODO: iron this out and put those here
@@ -141,12 +146,12 @@ pub struct Symbol {
 }
 
 impl Symbol {
-    pub const fn new(atom: Atom, scope: Scope) -> Self {
-        Self { atom, scope }
+    pub const fn new(ident: Ident, scope: Scope) -> Self {
+        Self { ident, scope }
     }
 
-    pub fn get_atom(&self) -> &Atom {
-        &self.atom
+    pub fn ident(&self) -> &Ident {
+        &self.ident
     }
 
     pub fn get_scope(&self) -> Scope {
@@ -169,9 +174,9 @@ impl Symbol {
 impl fmt::Display for Symbol {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.scope == Scope::PUBLIC {
-            write!(f, "{}", self.atom)
+            write!(f, "{}", self.ident)
         } else {
-            write!(f, "{}${}", self.atom, self.scope)
+            write!(f, "{}${}", self.ident, self.scope)
         }
     }
 }
@@ -185,7 +190,7 @@ impl<'a> From<&'a str> for Symbol {
 impl From<Atom> for Symbol {
     fn from(atom: Atom) -> Self {
         Self {
-            atom,
+            ident: Ident::from(atom),
             scope: Scope::PUBLIC,
         }
     }
@@ -199,13 +204,13 @@ impl<'a> From<&'a Symbol> for Symbol {
 
 impl From<Symbol> for Atom {
     fn from(sym: Symbol) -> Atom {
-        sym.atom
+        sym.ident.into()
     }
 }
 
 impl<'a> From<&'a Symbol> for Atom {
     fn from(sym: &'a Symbol) -> Atom {
-        sym.atom.clone()
+        sym.ident.atom().clone()
     }
 }
 
@@ -234,11 +239,11 @@ impl fmt::Display for Name {
     }
 }
 
-pub type Path = Vector<Atom>;
+pub type Path = Vector<Ident>;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Var {
-    Named(Atom),
+    Named(Ident),
     Anonymous,
 }
 
@@ -324,30 +329,30 @@ impl SymbolTableInner {
         self.pinned == scope.1
     }
 
-    fn get_or_insert_scope<S>(&mut self, scope_ident: S) -> Scope
+    fn get_or_insert_scope<S>(&mut self, scope_sym: S) -> Scope
     where
         S: Into<Symbol> + std::borrow::Borrow<Symbol>,
     {
-        if scope_ident.borrow().get_scope().is_reserved() {
-            if let Some(scope) = self.reserved_scopes.get(scope_ident.borrow()) {
+        if scope_sym.borrow().get_scope().is_reserved() {
+            if let Some(scope) = self.reserved_scopes.get(scope_sym.borrow()) {
                 return *scope;
             }
         }
 
-        if scope_ident.borrow().get_atom() == &atom!("super") {
+        if scope_sym.borrow().ident() == &ident_internal!("super") {
             return self
-                .get_scope_metadata(scope_ident.borrow().get_scope())
+                .get_scope_metadata(scope_sym.borrow().get_scope())
                 .name
                 .get_scope();
         }
 
-        match self.scopes.get(scope_ident.borrow()) {
+        match self.scopes.get(scope_sym.borrow()) {
             Some(scope) => *scope,
             None => {
                 let new_scope = Scope(self.scopes.len() as u64 + Scope::NUM_RESERVED, self.pinned);
-                self.scopes.insert(scope_ident.borrow().clone(), new_scope);
+                self.scopes.insert(scope_sym.borrow().clone(), new_scope);
                 self.scope_metadata.push(ScopeMetadata {
-                    name: scope_ident.into(),
+                    name: scope_sym.into(),
                 });
                 new_scope
             }
@@ -432,7 +437,7 @@ impl SymbolTableInner {
             }
 
             let prev_root = mem::replace(&mut root, scope_name);
-            path.push_front(prev_root.atom);
+            path.push_front(prev_root.ident);
         }
 
         Name { path, root }
@@ -631,7 +636,7 @@ mod tests {
 
         let name = Name {
             root: map_module,
-            path: vector![atom!("super"), Atom::from("elem")],
+            path: vector![ident_internal!("super"), Ident::from("elem")],
         };
 
         assert_eq!(symbols.normalize(name), elem_module);

@@ -5,7 +5,8 @@ use crate::{
         IrError,
     },
     parse::{self, ParseError, QuasiVar},
-    Atom, Name, Path, Scope, Symbol, SymbolTable,
+    symbol::Path,
+    Ident, Name, Scope, Symbol, SymbolTable,
 };
 
 use ::{
@@ -57,8 +58,8 @@ pub struct IrModule {
 }
 
 impl IrModule {
-    pub fn symbol(&self, name: impl Into<Atom>) -> Symbol {
-        self.root.get_scope().symbol(name)
+    pub fn symbol(&self, ident: impl Into<Ident>) -> Symbol {
+        self.root.get_scope().symbol(ident)
     }
 
     pub fn path(&self, path: impl Into<Path>) -> Name {
@@ -203,7 +204,7 @@ impl<'ctx> Fold for LinkModules<'ctx> {
         if let Some(import) = self.imports.get(&sym) {
             let name = self.modules[import.from].path(import.path.clone());
             let foreign = self.modules.symbols.normalize(name.clone());
-            let local = self.new_root_scope.symbol(sym.get_atom());
+            let local = self.new_root_scope.symbol(sym.ident());
             self.modules.symbols.alias(local.clone(), foreign);
 
             let local_name = Name::from(local);

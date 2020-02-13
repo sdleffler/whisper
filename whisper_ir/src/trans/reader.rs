@@ -100,7 +100,7 @@ impl<'re, R: TermReader<'re, View = R>> TermVisitor<'re, R> for ConstByGlobal {
 
     fn visit_const(self, symbols: &SymbolTable, cst: Name) -> Self::Value {
         let sym = symbols.normalize(cst);
-        if sym.get_scope() == Scope::PUBLIC && sym.get_atom() == self.0 {
+        if sym.get_scope() == Scope::PUBLIC && sym.ident() == self.0 {
             ()
         } else {
             todo!("error handling")

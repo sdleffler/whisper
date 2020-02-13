@@ -10,7 +10,7 @@ use ::{
         parenthesized,
         parse::{discouraged::Speculative, Lookahead1, Parse, ParseStream},
         token::{Brace, Bracket, Paren},
-        Error, Ident, LitFloat, LitInt, LitStr, Result, Token, Type,
+        Error, Ident as SynIdent, LitFloat, LitInt, LitStr, Result, Token, Type,
     },
 };
 
@@ -19,7 +19,7 @@ use crate::{
         IrCompoundKind, IrGoal, IrKnowledgeBase, IrModuleEntry, IrModuleRef, IrNode, IrQuery,
         IrRef, IrRelation, IrTermGraph,
     },
-    Atom, Name, Symbol, SymbolTable, Var,
+    Ident, Name, Symbol, SymbolTable, Var,
 };
 
 #[cfg(test)]
@@ -39,8 +39,8 @@ pub struct ParseError {
 // public interface to constructing a `ParseStream` from a `TokenStream`... please? let me know
 // and i'll treat you at the next Rust meetup ;_;)
 std::thread_local! {
-    static FN_IDENT: RefCell<Ident> = RefCell::new(Ident::new("AllCatsAreBeautiful", Span::call_site()));
-    static QUASIS: RefCell<HashMap<Ident, QuasiTypeKind>> = RefCell::new(HashMap::new());
+    static FN_IDENT: RefCell<SynIdent> = RefCell::new(SynIdent::new("AllCatsAreBeautiful", Span::call_site()));
+    static QUASIS: RefCell<HashMap<SynIdent, QuasiTypeKind>> = RefCell::new(HashMap::new());
     static GRAPHS: RefCell<(IrKnowledgeBase, IrTermGraph)> = {
         let symbol_table = SymbolTable::new();
         RefCell::new((IrKnowledgeBase::new(symbol_table.clone()), IrTermGraph::new(symbol_table.clone())))
@@ -146,7 +146,7 @@ fn is_keyword(lookahead: &Lookahead1) -> bool {
 }
 
 fn is_name_start(lookahead: &Lookahead1) -> bool {
-    (lookahead.peek(Ident::peek_any)
+    (lookahead.peek(SynIdent::peek_any)
         && (!is_keyword(lookahead)
             || lookahead.peek(Token![self])
             || lookahead.peek(Token![super])))
@@ -197,7 +197,7 @@ pub enum QuasiTypeKind {
 
 #[derive(Clone)]
 pub struct QuasiArg {
-    pub ident: Ident,
+    pub ident: SynIdent,
     pub ty: Type,
     pub kind: QuasiTypeKind,
 }
@@ -239,7 +239,7 @@ impl Parse for QuasiArg {
 
 // TODO: Figure out how expensive cloning an `Ident` is.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct QuasiVar(pub Ident);
+pub struct QuasiVar(pub SynIdent);
 
 #[doc(hidden)]
 impl Parse for Name {
@@ -267,33 +267,33 @@ impl Parse for Name {
                 let root = with_graphs(|modules, _| modules[get_module()].get_root().clone());
                 Name {
                     root,
-                    path: im::vector![atom!("super")],
+                    path: im::vector![ident_internal!("super")],
                 }
             } else {
-                let atom = if lookahead.peek(LitStr) {
+                let ident = if lookahead.peek(LitStr) {
                     let lit_str = input.parse::<LitStr>()?;
                     lit_str.value().into()
                 } else {
-                    Atom::from(&*input.call(Ident::parse_any)?.to_string())
+                    Ident::from(&*input.call(SynIdent::parse_any)?.to_string())
                 };
 
                 Name {
                     root: Symbol::PUBLIC,
-                    path: im::vector![atom],
+                    path: im::vector![ident],
                 }
             };
 
             while input.peek(Token![::]) {
                 input.parse::<Token![::]>()?;
 
-                let atom = if input.peek(LitStr) {
+                let ident = if input.peek(LitStr) {
                     let lit_str = input.parse::<LitStr>()?;
                     lit_str.value().into()
                 } else {
-                    Atom::from(&*input.call(Ident::parse_any)?.to_string())
+                    Ident::from(&*input.call(SynIdent::parse_any)?.to_string())
                 };
 
-                name.path.push_back(atom);
+                name.path.push_back(ident);
             }
 
             if expect_end_bracket {
@@ -313,7 +313,7 @@ impl Parse for IrNode {
         let lookahead = input.lookahead1();
         if input.peek(Token![#]) {
             input.parse::<Token![#]>()?;
-            let ident = input.call(Ident::parse)?;
+            let ident = input.call(SynIdent::parse)?;
             QUASIS.with(|quasis| match quasis.borrow().get(&ident) {
                 Some(QuasiTypeKind::Term) => Ok(IrNode::Quasi(QuasiVar(ident))),
                 Some(other) => Err(Error::new_spanned(
@@ -336,11 +336,11 @@ impl Parse for IrNode {
             Ok(IrNode::Var(Var::Anonymous))
         } else if is_name_start(&lookahead) {
             let forked = input.fork();
-            if forked.peek(Ident::peek_any) {
-                let atom = Atom::from(&*forked.call(Ident::parse_any)?.to_string());
-                if atom.starts_with(char::is_uppercase) {
+            if forked.peek(SynIdent::peek_any) {
+                let ident = Ident::from(&*forked.call(SynIdent::parse_any)?.to_string());
+                if ident.str_ref().starts_with(char::is_uppercase) {
                     input.advance_to(&forked);
-                    return Ok(IrNode::Var(Var::Named(atom)));
+                    return Ok(IrNode::Var(Var::Named(ident)));
                 }
             }
 
@@ -541,11 +541,11 @@ impl Parse for IrRef {
                 Ok(new_compound(IrCompoundKind::Extern, args))
             } else {
                 let forked = input.fork();
-                if forked.peek(Ident::peek_any) {
-                    let atom = Atom::from(&*forked.call(Ident::parse_any)?.to_string());
-                    if atom.starts_with(char::is_uppercase) {
+                if forked.peek(SynIdent::peek_any) {
+                    let ident = Ident::from(&*forked.call(SynIdent::parse_any)?.to_string());
+                    if ident.str_ref().starts_with(char::is_uppercase) {
                         input.advance_to(&forked);
-                        let var = IrNode::Var(Var::Named(atom));
+                        let var = IrNode::Var(Var::Named(ident));
                         return Ok(new_try_in(new_compound(IrCompoundKind::Struct, args), var));
                     }
                 }
@@ -574,7 +574,7 @@ impl Parse for IrGoal {
             let forked = input.fork();
 
             forked.parse::<Token![#]>()?;
-            let ident = forked.call(Ident::parse)?;
+            let ident = forked.call(SynIdent::parse)?;
             let qv_res = QUASIS.with(|quasis| match quasis.borrow().get(&ident) {
                 Some(QuasiTypeKind::Goal) => Ok(IrGoal::Quasi(QuasiVar(ident))),
                 Some(other) => Err(Error::new_spanned(
@@ -652,7 +652,7 @@ impl Parse for IrModuleEntry {
             let forked = input.fork();
 
             forked.parse::<Token![#]>()?;
-            let ident = forked.call(Ident::parse)?;
+            let ident = forked.call(SynIdent::parse)?;
             let qv_res = QUASIS.with(|quasis| match quasis.borrow().get(&ident) {
                 Some(QuasiTypeKind::Relation) => {
                     Ok(IrModuleEntry::Quasi(QuasiVar(ident)))
@@ -816,7 +816,7 @@ impl Parse for IrKnowledgeBase {
 
 #[doc(hidden)]
 pub struct QuasiquoteInput<P> {
-    pub fn_ident: Ident,
+    pub fn_ident: SynIdent,
     pub args: Vec<QuasiArg>,
     pub parsed: P,
 }
@@ -826,7 +826,7 @@ impl<P: Parse> Parse for QuasiquoteInput<P> {
     fn parse(input: ParseStream) -> Result<Self> {
         input.parse::<Token![fn]>()?;
 
-        let fn_ident = input.parse::<Ident>()?;
+        let fn_ident = input.parse::<SynIdent>()?;
         FN_IDENT.with(|old_fn_ident| old_fn_ident.replace(fn_ident.clone()));
 
         let content;

@@ -228,7 +228,7 @@ impl IrTermGraph {
                 if symbol == &Symbol::LOCAL {
                     Some(self.root.clone())
                 } else if symbol.get_scope() == Scope::LOCAL {
-                    Some(self.root.get_scope().symbol(symbol.get_atom()))
+                    Some(self.root.get_scope().symbol(symbol.ident()))
                 } else {
                     None
                 }

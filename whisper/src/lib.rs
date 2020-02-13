@@ -52,7 +52,7 @@ pub use crate::{
     word::{Address, Tag, UnpackedWord, Word},
 };
 
-pub use whisper_ir::{Atom, Name, Scope, Symbol, SymbolIndex, SymbolTable, Var};
+pub use whisper_ir::{Ident, Name, Scope, Symbol, SymbolIndex, SymbolTable, Var};
 
 pub mod ir {
     pub use whisper_ir::graph::*;
@@ -72,5 +72,5 @@ pub mod prelude {
         session::{Session, SimpleSession},
     };
 
-    pub use whisper_ir::{graph::*, Atom, Name, Scope, Symbol, SymbolIndex, SymbolTable, Var};
+    pub use whisper_ir::{graph::*, Ident, Name, Scope, Symbol, SymbolIndex, SymbolTable, Var};
 }

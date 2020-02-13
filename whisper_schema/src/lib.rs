@@ -63,7 +63,7 @@ use {
     whisper_ir::{
         graph::Blob,
         trans::{writer::VarScopeId, CompoundKind, TermEmitter, TermGraph, TermWriter},
-        Atom, Symbol,
+        Ident, Scope, Symbol,
     },
 };
 
@@ -85,7 +85,7 @@ pub enum SchemaCompound<'arena> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SchemaNode<'arena> {
-    Const(Atom),
+    Const(Ident),
     Int32(i32),
     UInt32(u32),
     Float32(OrderedFloat<f32>),
@@ -107,7 +107,7 @@ impl<'arena> SchemaNode<'arena> {
         B: TermWriter,
     {
         match self {
-            SchemaNode::Const(s) => emitter.emit_const(Symbol::from(s.clone()).into()),
+            SchemaNode::Const(s) => emitter.emit_const(Scope::PUBLIC.symbol(s.clone()).into()),
             SchemaNode::Int32(i) => emitter.emit_i32(*i),
             SchemaNode::UInt32(u) => emitter.emit_u32(*u),
             SchemaNode::Float32(f) => emitter.emit_f32(f.into_inner()),
@@ -123,7 +123,7 @@ impl<'arena> SchemaNode<'arena> {
         SchemaNode::Compound(SchemaCompound::Tagged(name, node))
     }
 
-    fn const_from(s: impl Into<Atom>) -> Self {
+    fn const_from(s: impl Into<Ident>) -> Self {
         SchemaNode::Const(s.into())
     }
 }

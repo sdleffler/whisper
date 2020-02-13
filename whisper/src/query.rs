@@ -2,7 +2,7 @@ use crate::{
     heap::SharedHeap,
     maybe_shared::MaybeShared,
     word::{Address, Word},
-    Atom,
+    Ident,
 };
 
 use ::{
@@ -13,7 +13,7 @@ use ::{
 
 pub type SharedQuery = MaybeShared<'static, Query>;
 
-pub type QueryMap = OrdMap<Atom, Address>;
+pub type QueryMap = OrdMap<Ident, Address>;
 
 /// A fully constructed query, ready to be executed on a [`KnowledgeBase`].
 ///

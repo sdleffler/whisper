@@ -9,7 +9,10 @@ pub mod trans;
 pub mod parse;
 pub mod proc_macro;
 
-pub use crate::{graph::*, symbol::*};
+pub use crate::{
+    graph::*,
+    symbol::{Ident, Name, Scope, Symbol, SymbolIndex, SymbolTable, Var},
+};
 
 #[doc(hidden)]
 pub use im::{hashset, vector};

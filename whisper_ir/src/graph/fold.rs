@@ -13,7 +13,7 @@
 
 use crate::{
     graph::{IrGoal, IrModuleEntry, IrNode, IrQuery, IrRef, IrRelation, IrTermGraph},
-    Atom, Name, Scope, Symbol, Var,
+    Ident, Name, Scope, Symbol, Var,
 };
 
 pub trait Fold {
@@ -33,7 +33,7 @@ pub trait Fold {
         fold_var(self, ir_graph, var)
     }
 
-    fn fold_atom(&mut self, _ir_graph: &mut IrTermGraph, _atom: &Atom) -> Option<Atom> {
+    fn fold_ident(&mut self, _ir_graph: &mut IrTermGraph, _ident: &Ident) -> Option<Ident> {
         None
     }
 
@@ -97,7 +97,7 @@ where
     let mut path = name.path.clone();
     let mut focus = path.focus_mut();
     for i in 0..focus.len() {
-        if let Some(updated_segment) = v.fold_atom(ir_graph, focus.get(i).unwrap()) {
+        if let Some(updated_segment) = v.fold_ident(ir_graph, focus.get(i).unwrap()) {
             *focus.index_mut(i) = updated_segment;
         }
     }
@@ -125,7 +125,7 @@ where
     V: Fold + ?Sized,
 {
     match var {
-        Var::Named(atom) => v.fold_atom(ir_graph, atom).map(Var::Named),
+        Var::Named(ident) => v.fold_ident(ir_graph, ident).map(Var::Named),
         Var::Anonymous => None,
     }
 }
@@ -186,8 +186,8 @@ where
     V: Fold + ?Sized,
 {
     match node {
-        IrNode::Const(sym) => v.fold_const(ir_graph, sym).map(IrNode::Const),
-        IrNode::Var(sym) => v.fold_var(ir_graph, sym).map(IrNode::Var),
+        IrNode::Const(name) => v.fold_const(ir_graph, name).map(IrNode::Const),
+        IrNode::Var(var) => v.fold_var(ir_graph, var).map(IrNode::Var),
         IrNode::Int32(i) => v.fold_int32(ir_graph, i).map(IrNode::Int32),
         IrNode::UInt32(i) => v.fold_uint32(ir_graph, i).map(IrNode::UInt32),
         IrNode::Float32(i) => v.fold_float32(ir_graph, i).map(IrNode::Float32),

@@ -1,7 +1,7 @@
 use ::{
     proc_macro2::{Span, TokenStream},
     quote::{quote, ToTokens},
-    syn::{Ident, Result},
+    syn::{Ident as SynIdent, Result},
 };
 
 use crate::{
@@ -10,8 +10,16 @@ use crate::{
         IrQuery, IrRef, IrRelation, IrTermGraph,
     },
     parse::{self, QuasiArg, QuasiVar, QuasiquoteInput},
-    Name, Symbol, SymbolTable, Var,
+    Ident, Name, Symbol, SymbolTable, Var,
 };
+
+impl ToTokens for Ident {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let str_component = self.str_ref();
+        let id_component = self.id();
+        quote!(Ident::from_parts(#str_component.into(), #id_component)).to_tokens(tokens);
+    }
+}
 
 impl ToTokens for Symbol {
     fn to_tokens(&self, tokens: &mut TokenStream) {
@@ -21,23 +29,24 @@ impl ToTokens for Symbol {
             self
         );
 
-        let s = self.get_atom().as_ref();
-        let i = self.get_scope().get_id();
-        quote!(Scope::from_id(#i).symbol(#s)).to_tokens(tokens);
+        let ident = self.ident();
+        let scope_id = self.get_scope().get_id();
+        quote!(Scope::from_id(#scope_id).symbol(#ident)).to_tokens(tokens);
     }
 }
 
 impl ToTokens for Name {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let root = &self.root;
-        let segments = self.path.iter().map(AsRef::<str>::as_ref);
+        let segments = self.path.iter();
 
         let quoted = quote! {
             Name {
                 root: #root,
-                path: vector![#(#segments.into()),*],
+                path: vector![#(#segments),*],
             }
         };
+
         quoted.to_tokens(tokens);
     }
 }
@@ -45,10 +54,7 @@ impl ToTokens for Name {
 impl ToTokens for Var {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
-            Var::Named(atom) => {
-                let atom_str = atom.as_ref();
-                quote!(Var::Named(#atom_str.into())).to_tokens(tokens);
-            }
+            Var::Named(ident) => quote!(Var::Named(#ident)).to_tokens(tokens),
             Var::Anonymous => quote!(Var::Anonymous).to_tokens(tokens),
         }
     }
@@ -62,22 +68,22 @@ enum Mode {
 }
 
 struct SyntaxCtx {
-    terms_ident: Ident,
-    modules_ident: Ident,
-    module_ident: Ident,
-    scope_ident: Ident,
-    root_ident: Ident,
+    terms_ident: SynIdent,
+    modules_ident: SynIdent,
+    module_ident: SynIdent,
+    scope_ident: SynIdent,
+    root_ident: SynIdent,
     mode: Mode,
 }
 
 impl SyntaxCtx {
     fn new(mode: Mode) -> Self {
         Self {
-            terms_ident: Ident::new("__ir_terms", Span::call_site()),
-            modules_ident: Ident::new("__ir_modules", Span::call_site()),
-            module_ident: Ident::new("__ir_module", Span::call_site()),
-            scope_ident: Ident::new("__ir_scope", Span::call_site()),
-            root_ident: Ident::new("__ir_root", Span::call_site()),
+            terms_ident: SynIdent::new("__ir_terms", Span::call_site()),
+            modules_ident: SynIdent::new("__ir_modules", Span::call_site()),
+            module_ident: SynIdent::new("__ir_module", Span::call_site()),
+            scope_ident: SynIdent::new("__ir_scope", Span::call_site()),
+            root_ident: SynIdent::new("__ir_root", Span::call_site()),
             mode,
         }
     }
@@ -105,16 +111,13 @@ impl IrNode {
 
         match self {
             Const(name) => {
-                let segments = name.path.iter().map(AsRef::<str>::as_ref);
+                let segments = name.path.iter();
                 match name.root {
                     Symbol::LOCAL => quote!(
-                        {
-                            let name = Name {
-                                root: #root_ident.clone(),
-                                path: vector![#(#segments.into()),*],
-                            };
-                            IrNode::Const(name)
-                        }
+                        IrNode::Const(Name {
+                            root: #root_ident.clone(),
+                            path: vector![#(#segments),*],
+                        })
                     ),
                     ref s if s.get_scope().is_reserved() => quote!(IrNode::Const(#name)),
                     ref s => panic!("root {} shouldn't be here.", s),
@@ -273,7 +276,7 @@ impl IrKnowledgeBase {
 }
 
 fn prelude_and_wrapper(
-    fn_ident: &Ident,
+    fn_ident: &SynIdent,
     ctx: &SyntaxCtx,
     args: &[QuasiArg],
     output_ty: &TokenStream,
@@ -292,7 +295,7 @@ fn prelude_and_wrapper(
                 IrRelation, IrCompound, IrCompoundKind, IrGoal,
                 IrModuleEntry, IrKnowledgeBase,
             },
-            Symbol, Scope, Name, Atom, Var,
+            Ident, Symbol, Scope, Name, Var,
             vector, hashset,
         };
     };
