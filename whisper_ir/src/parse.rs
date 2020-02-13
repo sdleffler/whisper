@@ -1,7 +1,7 @@
 use ::{
     derive_more::Display,
     failure::Fail,
-    im::{HashSet, Vector},
+    im::Vector,
     proc_macro2::Span,
     std::{cell::RefCell, collections::HashMap, mem},
     syn::{
@@ -10,8 +10,7 @@ use ::{
         parenthesized,
         parse::{discouraged::Speculative, Lookahead1, Parse, ParseStream},
         token::{Brace, Bracket, Paren},
-        Error, Ident, LitFloat, LitInt, LitStr, Result, Token, Type, UseGroup, UseName, UsePath,
-        UseTree,
+        Error, Ident, LitFloat, LitInt, LitStr, Result, Token, Type,
     },
 };
 

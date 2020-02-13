@@ -1,11 +1,7 @@
 use ::{
     derive_more::From,
     failure::Fail,
-    std::{
-        fs::{self, File},
-        io::Read,
-        path::Path,
-    },
+    std::{fs::File, io::Read, path::Path},
     whisper::{knowledge_base::SerializedKnowledgeBase, prelude::*},
 };
 

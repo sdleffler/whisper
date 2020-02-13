@@ -1,6 +1,6 @@
 use ::{
     failure::Fail,
-    im::{vector, Vector},
+    im::Vector,
     std::{
         cell::{Ref, RefCell},
         collections::HashMap,
@@ -617,6 +617,7 @@ impl Iterator for SymbolIter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use im::vector;
 
     #[test]
     fn super_scope() {
@@ -624,9 +625,9 @@ mod tests {
         let list_module = Scope::PUBLIC.symbol("list");
         let list_scope = symbols.get_scope(&list_module);
         let map_module = list_scope.symbol("map");
-        let map_scope = symbols.get_scope(&map_module);
+        let _map_scope = symbols.get_scope(&map_module);
         let elem_module = list_scope.symbol("elem");
-        let elem_scope = symbols.get_scope(&elem_module);
+        let _elem_scope = symbols.get_scope(&elem_module);
 
         let name = Name {
             root: map_module,

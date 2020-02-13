@@ -10,12 +10,10 @@ edition = "2018"
 whisper = { path = "../whisper" }
 whisper_ir = { path = "../whisper_ir" }
 failure = "0.1.6"
-serde = "1.0.104"
-serde_json = { path = "../json" }
+serde = "1.0"
+serde_json = { git = "https://github.com/sdleffler/json" }
 serde-transcode = "1.1.0"
 
 [dev-dependencies]
 serde = { version = "1.0", features = ["derive"] }
-serde_json = { path = "../json" }
-serde-transcode = "1.1.0"
 toml = "0.5.6"

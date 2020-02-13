@@ -1,27 +1,9 @@
 use ::{
     failure::Error,
-    serde::{de::DeserializeOwned, Deserialize, Deserializer},
+    serde::{de::DeserializeOwned, Deserializer},
     serde_json::Value,
-    std::marker::PhantomData,
     whisper::{prelude::*, session::DebugHandler},
 };
-
-#[derive(Debug, Clone)]
-pub struct Schema(SharedKnowledgeBase);
-
-impl Schema {
-    pub fn from_str<S: AsRef<str> + ?Sized>(string: &S) -> Self {
-        let mut terms = IrTermGraph::new(SymbolTable::new());
-        let ir_kb = terms.parse_knowledge_base_str(string).expect("oops");
-        Self(whisper::trans::knowledge_base(&terms, &ir_kb).into())
-    }
-
-    pub fn from_embedded(embedded: fn(&mut IrTermGraph) -> IrKnowledgeBase) -> Self {
-        let mut terms = IrTermGraph::new(SymbolTable::new());
-        let ir_kb = embedded(&mut terms);
-        Self(whisper::trans::knowledge_base(&terms, &ir_kb).into())
-    }
-}
 
 whisper::query! {
     fn validator_query(input: IrNode);
@@ -30,18 +12,33 @@ whisper::query! {
 }
 
 #[derive(Debug)]
-pub struct Validator<T: DeserializeOwned> {
+pub struct Validator {
     symbols: SymbolTable,
     session: Session<DebugHandler>,
-    _phantom: PhantomData<T>,
 }
 
-impl<T: DeserializeOwned> Validator<T> {
-    pub fn new(schema: &Schema) -> Self {
+impl Validator {
+    pub fn from_str<S: AsRef<str> + ?Sized>(string: &S) -> Self {
+        let symbols = SymbolTable::new();
+        let mut terms = IrTermGraph::new(symbols.clone());
+        let ir_kb = terms.parse_knowledge_base_str(string).expect("oops");
+        let kb = whisper::trans::knowledge_base(&terms, &ir_kb);
+
         Self {
-            symbols: schema.0.symbol_table().clone(),
-            session: Session::new(schema.0.symbol_table().clone(), schema.0.clone()),
-            _phantom: PhantomData,
+            symbols: symbols.clone(),
+            session: Session::new(symbols, kb.into()),
+        }
+    }
+
+    pub fn from_embedded(embedded: fn(&mut IrTermGraph) -> IrKnowledgeBase) -> Self {
+        let symbols = SymbolTable::new();
+        let mut terms = IrTermGraph::new(symbols.clone());
+        let ir_kb = embedded(&mut terms);
+        let kb = whisper::trans::knowledge_base(&terms, &ir_kb);
+
+        Self {
+            symbols: symbols.clone(),
+            session: Session::new(symbols, kb.into()),
         }
     }
 
@@ -53,10 +50,11 @@ impl<T: DeserializeOwned> Validator<T> {
         SharedQuery::from(builder.finish(&terms, &ir_query))
     }
 
-    pub fn deserialize_validated<'de, D: Deserializer<'de>>(
-        &mut self,
-        deserializer: D,
-    ) -> Result<T, Error> {
+    pub fn deserialize_validated<'de, T, D>(&mut self, deserializer: D) -> Result<T, Error>
+    where
+        T: DeserializeOwned,
+        D: Deserializer<'de>,
+    {
         let serializer = serde_json::value::Serializer;
         let json_value = serde_transcode::transcode(deserializer, serializer).unwrap();
         self.session.load(self.build_validator_query(&json_value));

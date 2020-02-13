@@ -1,5 +1,5 @@
 [workspace]
-members = {
+members = [
     "whisper",
     "whisper_codegen",
     "whisper_derive",
@@ -8,4 +8,4 @@ members = {
     "whisper_std",
     "whisper_util",
     "whisper_validate",
-}
+]

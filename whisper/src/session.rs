@@ -3,7 +3,7 @@ use crate::{
     knowledge_base::{Matches, SharedKnowledgeBase, SharedModule},
     query::{QueryMap, SharedQuery},
     word::{Address, Tag, Word},
-    Symbol, SymbolTable,
+    SymbolTable,
 };
 
 use ::{

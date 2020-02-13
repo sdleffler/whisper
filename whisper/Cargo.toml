@@ -26,7 +26,9 @@ num-integer = "0.1.42"
 lazy_static = "1.4.0"
 whisper_ir = { path = "../whisper_ir" }
 whisper_schema = { path = "../whisper_schema" }
-egress = { path = "../egress" }
+
+[dev-dependencies]
+egress = { git = "https://github.com/sdleffler/egress", branch = "serde-json-patch" }
 
 [build-dependencies]
 lalrpop = "0.17.2"

@@ -1,8 +1,4 @@
-use ::{
-    failure::Error,
-    serde::Deserialize,
-    whisper_validate::{Schema, Validator},
-};
+use ::{failure::Error, serde::Deserialize, whisper_validate::Validator};
 
 whisper::knowledge_base! {
     fn foo_schema();
@@ -55,8 +51,7 @@ pub struct FooConfig {
 
 fn main() -> Result<(), Error> {
     // First, we construct our validator from the knowledge base we made above.
-    let schema = Schema::from_embedded(foo_schema);
-    let mut validator = Validator::<FooConfig>::new(&schema);
+    let mut validator = Validator::from_embedded(foo_schema);
 
     // Now we can try to validate a few configs! Normally you'd be reading things
     // in from a file or something but in the interest of simplicity here we'll
@@ -66,17 +61,21 @@ fn main() -> Result<(), Error> {
     let foo_config_c = include_str!("foo_schema/foo_also_ok.toml");
 
     // Cool... Let's try to deserialize these! We'll start with `foo_config_a`.
-    let val = validator.deserialize_validated(&mut toml::Deserializer::new(foo_config_a))?;
+    let val = validator
+        .deserialize_validated::<FooConfig, _>(&mut toml::Deserializer::new(foo_config_a))?;
     println!("Valid: {:#?}", val);
 
     // Okay... so far so good, let's try `foo_config_b`.
-    match validator.deserialize_validated(&mut toml::Deserializer::new(foo_config_b)) {
+    match validator
+        .deserialize_validated::<FooConfig, _>(&mut toml::Deserializer::new(foo_config_b))
+    {
         Ok(val) => println!("All good! Also valid: {:#?}", val),
         Err(err) => println!("Oh no! {}", err),
     }
 
     // Oops, that last one failed! Alright, last but not least, let's try `foo_config_c`.
-    let val = validator.deserialize_validated(&mut toml::Deserializer::new(foo_config_c))?;
+    let val = validator
+        .deserialize_validated::<FooConfig, _>(&mut toml::Deserializer::new(foo_config_c))?;
     println!("Valid: {:#?}", val);
 
     // And that one passes with flying colors.

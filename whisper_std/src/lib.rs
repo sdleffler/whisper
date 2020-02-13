@@ -1,10 +1,4 @@
-use ::{
-    lazy_static::lazy_static,
-    whisper::{
-        knowledge_base::{KnowledgeBase, SerializedKnowledgeBase},
-        prelude::*,
-    },
-};
+use ::{lazy_static::lazy_static, whisper::knowledge_base::SerializedKnowledgeBase};
 
 pub fn list() -> &'static SerializedKnowledgeBase {
     lazy_static! {
@@ -31,6 +25,7 @@ pub fn map() -> &'static SerializedKnowledgeBase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use whisper::prelude::*;
 
     #[test]
     fn list_no_bincode_errors() {
