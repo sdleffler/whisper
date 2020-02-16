@@ -137,7 +137,7 @@ fn validate_foo() -> Result<(), Error> {
 
     // Okay... so far so good, let's try `foo_config_b`.
     match validator.deserialize_validated(&mut toml::Deserializer::new(foo_config_b)) {
-        Ok(val) => println!("All good! Also valid: {:#?}", val),
+        Ok(val) => panic!("All good! Also valid: {:#?}", val),
         Err(err) => println!("Oh no! {}", err),
     }
 
