@@ -464,7 +464,7 @@ impl<H: ExternHandler> Session<H> {
         knowledge: KnowledgeBase,
         handler: H,
     ) -> Self {
-        assert_eq!(&symbols, knowledge.symbol_table());
+        assert_eq!(&symbols, knowledge.symbols());
 
         Self {
             heap: Heap::new(symbols.clone()),
@@ -489,7 +489,7 @@ impl<H: ExternHandler> Session<H> {
     }
 
     pub fn load_with_extern_state(&mut self, query: SharedQuery, extern_state: H::State) {
-        assert_eq!(&self.symbols, query.symbol_table());
+        assert_eq!(&self.symbols, query.symbols());
 
         let query = query.into_owned();
 

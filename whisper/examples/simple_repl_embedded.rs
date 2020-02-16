@@ -4,7 +4,7 @@ use ::{
     std::io::{self, prelude::*},
     whisper::{
         ir::{IrKnowledgeBase, IrTermGraph},
-        Heap, KnowledgeBase, SharedQuery, SimpleSession, Symbol, SymbolTable,
+        Heap, SharedQuery, SimpleSession, Symbol, SymbolTable,
     },
 };
 

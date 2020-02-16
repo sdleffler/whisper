@@ -33,7 +33,7 @@ impl<'heap> HeapReader<'heap> {
         V: TermVisitor<'heap, Self>,
     {
         v.visit_compound(
-            self.heap.symbol_table(),
+            self.heap.symbols(),
             CompoundKind::Tagged,
             self.refocus(addr..addr + 2),
         )
@@ -45,7 +45,7 @@ impl<'heap> HeapReader<'heap> {
     {
         let n = self.heap[addr].assert_tag(Tag::StructArity).get_value() as usize;
         v.visit_compound(
-            self.heap.symbol_table(),
+            self.heap.symbols(),
             CompoundKind::Struct(n),
             self.refocus(addr + 1..addr + n + 1),
         )
@@ -57,7 +57,7 @@ impl<'heap> HeapReader<'heap> {
     {
         let n = self.heap[addr].assert_tag(Tag::ExternArity).get_value() as usize;
         v.visit_compound(
-            self.heap.symbol_table(),
+            self.heap.symbols(),
             CompoundKind::Extern(n),
             self.refocus(addr + 1..addr + n + 1),
         )
@@ -69,7 +69,7 @@ impl<'heap> HeapReader<'heap> {
     {
         let n = self.heap[addr].assert_tag(Tag::OpaqueArity).get_value() as usize;
         v.visit_compound(
-            self.heap.symbol_table(),
+            self.heap.symbols(),
             CompoundKind::Opaque(n),
             self.refocus(addr + 1..addr + n + 1),
         )
@@ -96,7 +96,7 @@ impl<'heap> HeapReader<'heap> {
         V: TermVisitor<'heap, Self>,
     {
         v.visit_compound(
-            self.heap.symbol_table(),
+            self.heap.symbols(),
             CompoundKind::Cons,
             self.refocus(addr..addr + 2),
         )
@@ -107,7 +107,7 @@ impl<'heap> HeapReader<'heap> {
         V: TermVisitor<'heap, Self>,
     {
         v.visit_compound(
-            self.heap.symbol_table(),
+            self.heap.symbols(),
             CompoundKind::Cons2,
             self.refocus(addr..addr + 3),
         )

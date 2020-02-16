@@ -4,7 +4,7 @@ use ::{
     whisper::{
         builder::QueryBuilder,
         ir::{IrKnowledgeBase, IrNode, IrTermGraph},
-        Heap, KnowledgeBase, SharedQuery, SimpleSession, Symbol, SymbolTable,
+        Heap, SharedQuery, SimpleSession, Symbol, SymbolTable,
     },
 };
 

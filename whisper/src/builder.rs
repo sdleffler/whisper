@@ -41,7 +41,7 @@ impl<'heap> QueryBuilder<'heap> {
     }
 
     pub fn finish(mut self, terms: &IrTermGraph, ir_query: &IrQuery) -> Query {
-        assert_eq!(terms.symbol_table(), self.writer.as_heap().symbol_table());
+        assert_eq!(terms.symbols(), self.writer.as_heap().symbols());
 
         let mut emitter = TermEmitter::new(terms, &mut self.writer);
         let var_scope = emitter.push_scope(self.var_scope);

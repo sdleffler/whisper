@@ -56,7 +56,7 @@ impl Heap {
         self.words.clear();
     }
 
-    pub fn symbol_table(&self) -> &SymbolTable {
+    pub fn symbols(&self) -> &SymbolTable {
         &self.symbols
     }
 
@@ -183,7 +183,7 @@ impl<'heap> fmt::Display for DisplayAt<'heap> {
             UInt32(i) => i.fmt(f),
             Int32(i) => i.fmt(f),
             Float32(v) => v.fmt(f),
-            Const(c) => write!(f, "\"{}\"", self.heap.symbol_table().read().lookup(c)),
+            Const(c) => write!(f, "\"{}\"", self.heap.symbols().read().lookup(c)),
             StructArity(arity) => {
                 let display = self.heap.words[self.addr + 1..][..arity]
                     .iter()
@@ -248,7 +248,7 @@ impl<'heap> fmt::Display for DisplayWord<'heap> {
             UInt32(i) => i.fmt(f),
             Int32(i) => i.fmt(f),
             Float32(v) => v.fmt(f),
-            Const(c) => write!(f, "\"{}\"", self.heap.symbol_table().read().lookup(c)),
+            Const(c) => write!(f, "\"{}\"", self.heap.symbols().read().lookup(c)),
             StructArity(arity) => write!(f, "StrA({})", arity),
             ExternArity(arity) => write!(f, "ExtA({})", arity),
             BinaryArity(arity) => write!(f, "BinA({})", arity),

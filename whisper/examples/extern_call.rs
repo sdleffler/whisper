@@ -13,7 +13,7 @@
 //     let mut terms = IrTermGraph::new(symbol_table);
 //     let ir_kb = terms.parse_clause(include_str!("./extern_call.wh"));
 //     let kb = SharedKnowledgeBase::Owned(
-//         HeapEmitter::new(terms.symbol_table().clone()).emit_knowledge_base(&terms, &ir_kb),
+//         HeapEmitter::new(terms.symbols().clone()).emit_knowledge_base(&terms, &ir_kb),
 //     );
 
 //     println!("Compiled knowledge base:\n{}", kb.display());
@@ -23,7 +23,7 @@
 //     for line in stdin.lock().lines() {
 //         let ir_query = terms.parse_query(&line?);
 //         let query = SharedQuery::Owned(
-//             HeapEmitter::from(Heap::new(kb.symbol_table().clone())).emit_query(&terms, &ir_query),
+//             HeapEmitter::from(Heap::new(kb.symbols().clone())).emit_query(&terms, &ir_query),
 //         );
 
 //         // println!("Compiled query:\n{}", *query);

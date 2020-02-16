@@ -100,7 +100,7 @@ impl Typechecker {
     }
 
     pub fn infer(&mut self, term: &Term) -> Option<Type> {
-        let mut builder = QueryBuilder::new(Heap::new(self.terms.symbol_table().clone()));
+        let mut builder = QueryBuilder::new(Heap::new(self.terms.symbols().clone()));
         let term_addr = builder.bind(term);
         let ir_query = stlc_infer(&mut self.terms, &self.root, &term_addr);
         let query = builder.finish(&self.terms, &ir_query);

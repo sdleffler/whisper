@@ -38,7 +38,7 @@ impl<'re, 'graph: 're> TermReader<'re> for TermGraphReader<'graph> {
 
         match node {
             IrNode::Var(var) => Some(v.visit_var(var.clone())),
-            IrNode::Const(name) => Some(v.visit_const(self.terms.symbol_table(), name.clone())),
+            IrNode::Const(name) => Some(v.visit_const(self.terms.symbols(), name.clone())),
             IrNode::Ref(ir_ref) => {
                 let comp = &self.terms[*ir_ref];
                 let iter = comp.args.iter();
@@ -56,7 +56,7 @@ impl<'re, 'graph: 're> TermReader<'re> for TermGraphReader<'graph> {
                     nodes: iter,
                 };
 
-                Some(v.visit_compound(self.terms.symbol_table(), kind, tr))
+                Some(v.visit_compound(self.terms.symbols(), kind, tr))
             }
             IrNode::Int32(i) => Some(v.visit_i32(*i)),
             IrNode::UInt32(u) => Some(v.visit_u32(*u)),

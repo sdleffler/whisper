@@ -67,8 +67,8 @@ pub fn use_graphs(new_modules: IrKnowledgeBase, new_terms: IrTermGraph) {
 
 pub fn swap_graphs() -> (IrKnowledgeBase, IrTermGraph) {
     with_graphs(|modules, terms| {
-        let new_terms = IrTermGraph::new(terms.symbol_table().clone());
-        let new_modules = IrKnowledgeBase::new(modules.symbol_table().clone());
+        let new_terms = IrTermGraph::new(terms.symbols().clone());
+        let new_modules = IrKnowledgeBase::new(modules.symbols().clone());
 
         (
             mem::replace(modules, new_modules),
@@ -79,14 +79,14 @@ pub fn swap_graphs() -> (IrKnowledgeBase, IrTermGraph) {
 
 pub fn swap_terms() -> IrTermGraph {
     with_graphs(|_, terms| {
-        let new_terms = IrTermGraph::new(terms.symbol_table().clone());
+        let new_terms = IrTermGraph::new(terms.symbols().clone());
         mem::replace(terms, new_terms)
     })
 }
 
 pub fn swap_knowledge_base() -> IrKnowledgeBase {
     with_graphs(|modules, _| {
-        let new_modules = IrKnowledgeBase::new(modules.symbol_table().clone());
+        let new_modules = IrKnowledgeBase::new(modules.symbols().clone());
         mem::replace(modules, new_modules)
     })
 }
@@ -782,7 +782,7 @@ impl Parse for IrModuleRef {
 
                 let child_module = with_graphs(|kb, _| {
                     name.root = kb[module].get_root().clone();
-                    let normalized_root = kb.symbol_table().write().normalize(name);
+                    let normalized_root = kb.symbols().write().normalize(name);
                     kb.new_named_module_with_root(normalized_root)
                 });
 

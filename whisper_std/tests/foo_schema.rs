@@ -43,8 +43,8 @@ pub struct Validator<T: DeserializeOwned> {
 impl<T: DeserializeOwned> Validator<T> {
     pub fn new(schema: &Schema) -> Self {
         Self {
-            symbols: schema.0.symbol_table().clone(),
-            session: Session::new(schema.0.symbol_table().clone(), schema.0.clone()),
+            symbols: schema.0.symbols().clone(),
+            session: Session::new(schema.0.symbols().clone(), schema.0.clone()),
             _phantom: PhantomData,
         }
     }
@@ -115,7 +115,7 @@ fn validate_foo() -> Result<(), Error> {
     // First, we construct our validator from the knowledge base we made above.
     let mut schema = Schema::from_embedded(foo_schema);
 
-    let import_point = schema.0.symbol_table().write().normalize(Name {
+    let import_point = schema.0.symbols().write().normalize(Name {
         root: Symbol::MOD,
         path: im::vector![Ident::from("std"), Ident::from("map")],
     });

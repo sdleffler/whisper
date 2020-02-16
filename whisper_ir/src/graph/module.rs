@@ -120,7 +120,7 @@ impl IrKnowledgeBase {
         }
     }
 
-    pub fn symbol_table(&self) -> &SymbolTable {
+    pub fn symbols(&self) -> &SymbolTable {
         &self.symbols
     }
 
@@ -159,8 +159,8 @@ impl IrKnowledgeBase {
         terms: &mut IrTermGraph,
         string: S,
     ) -> Result<IrModuleRef, IrError> {
-        let modules_owned = mem::replace(self, IrKnowledgeBase::new(self.symbol_table().clone()));
-        let terms_owned = mem::replace(terms, IrTermGraph::new(terms.symbol_table().clone()));
+        let modules_owned = mem::replace(self, IrKnowledgeBase::new(self.symbols().clone()));
+        let terms_owned = mem::replace(terms, IrTermGraph::new(terms.symbols().clone()));
         parse::use_graphs(modules_owned, terms_owned);
         let out = syn::parse_str(string.as_ref()).map_err(|syn_err| {
             ParseError {
@@ -234,7 +234,7 @@ impl IrKnowledgeBase {
         let mut exports = self[root].exports.clone();
 
         let new_root_scope = self[new_module].get_scope();
-        let symbols = terms.symbol_table().clone();
+        let symbols = terms.symbols().clone();
         let mut link_modules = LinkModules {
             symbols: &mut *symbols.write(),
             modules: self,

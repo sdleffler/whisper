@@ -280,7 +280,7 @@ impl KnowledgeBase {
         }
     }
 
-    pub fn symbol_table(&self) -> &SymbolTable {
+    pub fn symbols(&self) -> &SymbolTable {
         &self.symbols
     }
 

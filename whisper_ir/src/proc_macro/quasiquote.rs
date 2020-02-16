@@ -251,10 +251,7 @@ impl IrKnowledgeBase {
 
             // TODO: do we need a writer lock here? Will a reader lock + try_normalize_full
             // + unwrap work?
-            let module_name = terms
-                .symbol_table()
-                .write()
-                .normalize_full(m.get_root().clone());
+            let module_name = terms.symbols().write().normalize_full(m.get_root().clone());
 
             assert!(
                 module_name.root.get_scope().is_reserved(),
@@ -264,7 +261,7 @@ impl IrKnowledgeBase {
             );
 
             quote! {{
-                let root_sym = #terms_ident.symbol_table().write().normalize(#module_name);
+                let root_sym = #terms_ident.symbols().write().normalize(#module_name);
                 let #module_ident = #modules_ident.new_named_module_with_root(root_sym);
                 let _ = #module_toks;
             }}
@@ -273,7 +270,7 @@ impl IrKnowledgeBase {
         quote! {
             {
                 let mut #modules_ident =
-                    IrKnowledgeBase::new(#terms_ident.symbol_table().clone());
+                    IrKnowledgeBase::new(#terms_ident.symbols().clone());
                 #(#modules)*
 
                 #modules_ident

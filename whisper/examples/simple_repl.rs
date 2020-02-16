@@ -9,7 +9,7 @@
 //     let mut ir_graph = IrGraph::new();
 //     let ir_kb = ir_graph.parse_clause(include_str!("./simple_knowledge_base.wh"));
 //     let kb = SharedKnowledgeBase::Owned(
-//         HeapEmitter::new(ir_graph.symbol_table().clone()).emit_knowledge_base(&ir_graph, &ir_kb),
+//         HeapEmitter::new(ir_graph.symbols().clone()).emit_knowledge_base(&ir_graph, &ir_kb),
 //     );
 
 //     println!("Compiled knowledge base:\n{}", kb.display());
@@ -19,7 +19,7 @@
 //     for line in stdin.lock().lines() {
 //         let ir_query = ir_graph.parse_query(&line?);
 //         let query = SharedQuery::Owned(
-//             HeapEmitter::from(Heap::new(kb.symbol_table().clone()))
+//             HeapEmitter::from(Heap::new(kb.symbols().clone()))
 //                 .emit_query(&ir_graph, &ir_query),
 //         );
 

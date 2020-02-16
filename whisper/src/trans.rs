@@ -18,7 +18,7 @@ use crate::{
 };
 
 pub fn query(terms: &IrTermGraph, query: &IrQuery, mut heap: Heap) -> Query {
-    assert_eq!(terms.symbol_table(), heap.symbol_table());
+    assert_eq!(terms.symbols(), heap.symbols());
 
     let mut goals = SmallVec::new();
     heap.clear();
@@ -82,13 +82,9 @@ pub fn module(terms: &IrTermGraph, module: &IrModule, mut heap: Heap) -> Module 
 }
 
 pub fn knowledge_base(terms: &IrTermGraph, ir_modules: &IrKnowledgeBase) -> KnowledgeBase {
-    let mut kb = KnowledgeBase::new(terms.symbol_table().clone());
+    let mut kb = KnowledgeBase::new(terms.symbols().clone());
     for ir_module in ir_modules.iter() {
-        kb.insert(module(
-            terms,
-            ir_module,
-            Heap::new(terms.symbol_table().clone()),
-        ));
+        kb.insert(module(terms, ir_module, Heap::new(terms.symbols().clone())));
     }
 
     kb

@@ -144,11 +144,8 @@ impl IrTermGraph {
         &mut self,
         string: S,
     ) -> Result<IrKnowledgeBase, IrError> {
-        let terms_owned = mem::replace(self, IrTermGraph::new(self.symbol_table().clone()));
-        parse::use_graphs(
-            IrKnowledgeBase::new(self.symbol_table().clone()),
-            terms_owned,
-        );
+        let terms_owned = mem::replace(self, IrTermGraph::new(self.symbols().clone()));
+        parse::use_graphs(IrKnowledgeBase::new(self.symbols().clone()), terms_owned);
 
         let out = syn::parse_str::<IrKnowledgeBase>(string.as_ref()).map_err(|syn_err| {
             let parse_err = ParseError {
@@ -168,8 +165,8 @@ impl IrTermGraph {
         module: IrModuleRef,
         string: S,
     ) -> Result<(), IrError> {
-        let terms_owned = mem::replace(self, IrTermGraph::new(self.symbol_table().clone()));
-        let kb_owned = mem::replace(kb, IrKnowledgeBase::new(self.symbol_table().clone()));
+        let terms_owned = mem::replace(self, IrTermGraph::new(self.symbols().clone()));
+        let kb_owned = mem::replace(kb, IrKnowledgeBase::new(self.symbols().clone()));
 
         parse::use_graphs(kb_owned, terms_owned);
         parse::set_module(module);
@@ -199,11 +196,8 @@ impl IrTermGraph {
         root: Symbol,
         string: S,
     ) -> Result<IrQuery, IrError> {
-        let terms_owned = mem::replace(self, IrTermGraph::new(self.symbol_table().clone()));
-        parse::use_graphs(
-            IrKnowledgeBase::new(self.symbol_table().clone()),
-            terms_owned,
-        );
+        let terms_owned = mem::replace(self, IrTermGraph::new(self.symbols().clone()));
+        parse::use_graphs(IrKnowledgeBase::new(self.symbols().clone()), terms_owned);
         let out = syn::parse_str(string.as_ref()).map_err(|syn_err| {
             let parse_err = ParseError {
                 src: string.as_ref().to_string(),
