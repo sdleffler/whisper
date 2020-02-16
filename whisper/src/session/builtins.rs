@@ -1,9 +1,8 @@
 use crate::{
     heap::Heap,
-    knowledge_base::SharedKnowledgeBase,
-    session::{ExternHandler, Frame, GoalRef, Trail, Unfolded, UnificationStack},
+    session::{ExternHandler, Frame, GoalRef, ModuleCache, Trail, Unfolded, UnificationStack},
     word::{Address, Tag},
-    Symbol,
+    Symbol, SymbolIndex,
 };
 
 #[macro_export]
@@ -21,7 +20,7 @@ pub struct BuiltinContext<'sesh, H: ExternHandler> {
     pub extern_handler: &'sesh H,
     pub extern_context: &'sesh H::Context,
     pub extern_state: &'sesh mut H::State,
-    pub knowledge: &'sesh mut SharedKnowledgeBase,
+    pub modules: &'sesh mut ModuleCache,
     pub unifier: &'sesh mut UnificationStack,
     pub frame: &'sesh mut Frame<H::State>,
     pub trail: &'sesh mut Trail,
@@ -70,8 +69,9 @@ pub fn builtin_try_in<'sesh, H: ExternHandler>(
     let prev_next_goal = ctx.trail[ctx.goal].next;
     let next_goal = ctx.heap[addr + 2];
 
-    let name_index = ctx.heap[addr + 3].debug_assert_tag(Tag::Const).get_value() as usize;
-    let next_module = ctx.knowledge.get(name_index).cloned().unwrap();
+    let name_index =
+        SymbolIndex(ctx.heap[addr + 3].debug_assert_tag(Tag::Const).get_value() as usize);
+    let next_module = ctx.modules.get_or_insert(name_index);
 
     // println!(
     //     "`{}` in module with name `{}`",
@@ -96,7 +96,7 @@ pub fn handle_goal<'sesh, H: ExternHandler>(ctx: &'sesh mut BuiltinContext<'sesh
         .debug_assert_tag(Tag::Const)
         .get_value() as usize;
 
-    match (arity, first) {
+    match (arity, SymbolIndex(first)) {
         (1, Symbol::CUT_INDEX) => builtin_cut(ctx),
         (3, Symbol::IS_INDEX) => builtin_is(ctx, goal_addr),
         (3, Symbol::LET_INDEX) => todo!("evaluation for `let` goals not implemented yet"),

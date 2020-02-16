@@ -11,7 +11,7 @@ pub mod proc_macro;
 
 pub use crate::{
     graph::*,
-    symbol::{Ident, Name, Scope, Symbol, SymbolIndex, SymbolTable, Var},
+    symbol::{Ident, Name, Scope, Symbol, SymbolIndex, SymbolTable, SymbolTableInner, Var},
 };
 
 #[doc(hidden)]

@@ -156,7 +156,7 @@ pub fn reserved_symbols(input: TokenStream) -> TokenStream {
 
         let id = symbol_id_list.len();
         let id_name = format_ident!("{}_INDEX", constant_ident);
-        symbol_constants.push(quote!(pub const #id_name: usize = #id;));
+        symbol_constants.push(quote!(pub const #id_name: SymbolIndex = SymbolIndex(#id);));
 
         symbol_list.push(constant_ident);
         symbol_id_list.push(id_name);
@@ -180,7 +180,7 @@ pub fn reserved_symbols(input: TokenStream) -> TokenStream {
                 Box::leak(Box::<[Symbol]>::from(vector))
             };
 
-            static ref BUILTINS_SYM_TO_IDX: &'static std::collections::HashMap<Symbol, usize> = {
+            static ref BUILTINS_SYM_TO_IDX: &'static std::collections::HashMap<Symbol, SymbolIndex> = {
                 let mut map = std::collections::HashMap::new();
                 #(map.insert(Symbol::#symbol_list, Symbol::#symbol_id_list);)*
                 Box::leak(Box::new(map))

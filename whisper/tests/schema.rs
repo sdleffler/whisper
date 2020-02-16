@@ -4,7 +4,7 @@ use ::{
     whisper::{
         builder::QueryBuilder,
         ir::{IrKnowledgeBase, IrNode, IrTermGraph},
-        Heap, SharedKnowledgeBase, SharedQuery, SimpleSession, Symbol, SymbolTable,
+        Heap, KnowledgeBase, SharedQuery, SimpleSession, Symbol, SymbolTable,
     },
 };
 
@@ -59,7 +59,7 @@ fn query_foo() {
     validator(&mut terms, &mut modules, validator_mod);
     modules.link(&mut terms, validator_mod);
 
-    let validator_kb = SharedKnowledgeBase::Owned(whisper::trans::knowledge_base(&terms, &modules));
+    let validator_kb = whisper::trans::knowledge_base(&terms, &modules);
 
     let mut session = SimpleSession::new(symbol_table.clone(), validator_kb);
 

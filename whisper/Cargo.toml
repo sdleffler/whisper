@@ -26,6 +26,7 @@ num-integer = "0.1.42"
 lazy_static = "1.4.0"
 whisper_ir = { path = "../whisper_ir" }
 whisper_schema = { path = "../whisper_schema" }
+bark = { path = "../../bark" }
 
 [dev-dependencies]
 egress = "0.1.1"

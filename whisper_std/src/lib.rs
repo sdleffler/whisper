@@ -1,8 +1,8 @@
-use ::{lazy_static::lazy_static, whisper::knowledge_base::SerializedKnowledgeBase};
+use ::{lazy_static::lazy_static, whisper::knowledge_base::PortableKnowledgeBase};
 
-pub fn list() -> &'static SerializedKnowledgeBase {
+pub fn list() -> &'static PortableKnowledgeBase {
     lazy_static! {
-        static ref KB: SerializedKnowledgeBase = {
+        static ref KB: PortableKnowledgeBase = {
             let kb_bytes = include_bytes!(concat!(env!("OUT_DIR"), "/list.kb"));
             bincode::deserialize_from(&mut &kb_bytes[..]).expect("this must not fail!")
         };
@@ -11,9 +11,9 @@ pub fn list() -> &'static SerializedKnowledgeBase {
     &KB
 }
 
-pub fn map() -> &'static SerializedKnowledgeBase {
+pub fn map() -> &'static PortableKnowledgeBase {
     lazy_static! {
-        static ref KB: SerializedKnowledgeBase = {
+        static ref KB: PortableKnowledgeBase = {
             let kb_bytes = include_bytes!(concat!(env!("OUT_DIR"), "/map.kb"));
             bincode::deserialize_from(&mut &kb_bytes[..]).expect("this must not fail!")
         };

@@ -45,7 +45,7 @@ pub mod word;
 
 pub use crate::{
     heap::{Heap, SharedHeap},
-    knowledge_base::{KnowledgeBase, SharedKnowledgeBase},
+    knowledge_base::KnowledgeBase,
     query::{Query, SharedQuery},
     session::{ExternHandler, Session, SimpleSession},
     trans::HeapWriter,
@@ -67,7 +67,7 @@ pub mod prelude {
     pub use crate::{
         builder::QueryBuilder,
         heap::{Heap, SharedHeap},
-        knowledge_base::{KnowledgeBase, Module, SharedKnowledgeBase, SharedModule},
+        knowledge_base::{KnowledgeBase, Module},
         query::{Query, SharedQuery},
         session::{Session, SimpleSession},
     };

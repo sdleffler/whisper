@@ -248,7 +248,14 @@ impl IrKnowledgeBase {
 
         let modules = self.iter().map(|m| {
             let module_toks = m.to_syntax(terms, ctx);
-            let module_name = terms.symbol_table().normalize_full(m.get_root().clone());
+
+            // TODO: do we need a writer lock here? Will a reader lock + try_normalize_full
+            // + unwrap work?
+            let module_name = terms
+                .symbol_table()
+                .write()
+                .normalize_full(m.get_root().clone());
+
             assert!(
                 module_name.root.get_scope().is_reserved(),
                 "module name `{}` is not fully normalized (from `{}`)",
@@ -257,7 +264,7 @@ impl IrKnowledgeBase {
             );
 
             quote! {{
-                let root_sym = #terms_ident.symbol_table().normalize(#module_name);
+                let root_sym = #terms_ident.symbol_table().write().normalize(#module_name);
                 let #module_ident = #modules_ident.new_named_module_with_root(root_sym);
                 let _ = #module_toks;
             }}

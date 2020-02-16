@@ -1,6 +1,5 @@
 use crate::{
-    heap::{Heap, SerializedHeap, SerializedSymbol},
-    maybe_shared::MaybeShared,
+    heap::{Heap, PortableHeap, PortableSymbol},
     word::{Tag, Word},
     Symbol, SymbolIndex, SymbolTable,
 };
@@ -13,7 +12,7 @@ use ::{
     std::{
         collections::HashMap,
         ops::{Deref, Index, Range},
-        rc::Rc,
+        sync::Arc,
     },
 };
 
@@ -105,10 +104,13 @@ impl ExactSizeIterator for Matches {
     }
 }
 
-pub type SharedModule = Rc<Module>;
-
 #[derive(Debug, Clone)]
 pub struct Module {
+    inner: Arc<ModuleInner>,
+}
+
+#[derive(Debug)]
+struct ModuleInner {
     heap: Heap,
     const_sets: HashMap<(usize, Word), RoaringBitmap>,
     var_sets: Vec<RoaringBitmap>,
@@ -120,7 +122,7 @@ impl Index<RelationId> for Module {
     type Output = Relation;
 
     fn index(&self, idx: RelationId) -> &Self::Output {
-        &self.relations[idx.0]
+        &self.inner.relations[idx.0]
     }
 }
 
@@ -128,7 +130,7 @@ impl Index<Range<usize>> for Module {
     type Output = [Word];
 
     fn index(&self, range: Range<usize>) -> &Self::Output {
-        &self.heap[range]
+        &self.inner.heap[range]
     }
 }
 
@@ -136,13 +138,17 @@ impl Deref for Module {
     type Target = Heap;
 
     fn deref(&self) -> &Self::Target {
-        &self.heap
+        &self.inner.heap
     }
 }
 
 impl Module {
-    pub fn get_name(&self) -> &Symbol {
-        &self.name
+    pub fn symbols(&self) -> &SymbolTable {
+        &self.inner.heap.symbols
+    }
+
+    pub fn name(&self) -> &Symbol {
+        &self.inner.name
     }
 
     pub fn from_mapped_heap(name: Symbol, heap: Heap, relations: Vec<Relation>) -> Self {
@@ -177,11 +183,13 @@ impl Module {
         }
 
         Self {
-            heap: heap.into(),
-            const_sets,
-            var_sets,
-            relations,
-            name,
+            inner: Arc::new(ModuleInner {
+                heap: heap.into(),
+                const_sets,
+                var_sets,
+                relations,
+                name,
+            }),
         }
     }
 
@@ -207,14 +215,14 @@ impl Module {
                 Some(&word) => {
                     primary_idx += 1;
                     if word.is_indexable() {
-                        if let Some(sets) = self.const_sets.get(&(idx, word)) {
+                        if let Some(sets) = self.inner.const_sets.get(&(idx, word)) {
                             // println!("Indexable word found: {}", heap.display_word(word));
-                            break sets.iter().chain(self.var_sets[idx].iter());
+                            break sets.iter().chain(self.inner.var_sets[idx].iter());
                         }
                     }
                 }
                 None => {
-                    let matches = (0..self.relations.len())
+                    let matches = (0..self.inner.relations.len())
                         .map(RelationId)
                         .collect::<MatchesStorage>(); // This could match anything... collect *all* relations!
                     return Matches::new(matches);
@@ -231,13 +239,13 @@ impl Module {
                 if !w.is_indexable() {
                     continue 'checking;
                 } else {
-                    if let Some(set) = self.const_sets.get(&(pos, w)) {
+                    if let Some(set) = self.inner.const_sets.get(&(pos, w)) {
                         if set.contains(candidate) {
                             continue 'checking;
                         }
                     }
 
-                    if let Some(set) = self.var_sets.get(pos) {
+                    if let Some(set) = self.inner.var_sets.get(pos) {
                         if set.contains(candidate) {
                             continue 'checking;
                         }
@@ -249,7 +257,7 @@ impl Module {
 
             indices.push(RelationId(candidate as usize));
 
-            // println!("Match: {:?}", &self.relations[candidate as usize]);
+            // println!("Match: {:?}", &self.inner.relations[candidate as usize]);
         }
 
         // println!("{} matches found: {:?}", indices.len(), indices);
@@ -258,12 +266,10 @@ impl Module {
     }
 }
 
-pub type SharedKnowledgeBase = MaybeShared<'static, KnowledgeBase>;
-
 #[derive(Debug, Clone)]
 pub struct KnowledgeBase {
     symbols: SymbolTable,
-    modules: ImHashMap<SymbolIndex, SharedModule>,
+    modules: ImHashMap<SymbolIndex, Module>,
 }
 
 impl KnowledgeBase {
@@ -278,48 +284,57 @@ impl KnowledgeBase {
         &self.symbols
     }
 
-    pub fn get(&self, idx: SymbolIndex) -> Option<&SharedModule> {
+    pub fn get(&self, idx: SymbolIndex) -> Option<&Module> {
         self.modules.get(&idx)
     }
 
-    pub fn get_root(&self) -> &SharedModule {
+    pub fn get_root(&self) -> &Module {
         self.get(Symbol::MOD_INDEX).unwrap()
     }
 
-    pub fn insert(&mut self, module: impl Into<SharedModule>) {
+    pub fn insert(&mut self, module: impl Into<Module>) {
         let module = module.into();
-        assert_eq!(self.symbols, module.heap.symbols);
-        let index = self.symbols.resolve(&module.name);
+        assert_eq!(&self.symbols, module.symbols());
+        let index = self.symbols.write().resolve(module.name());
         self.modules.insert(index, module);
     }
 
-    pub fn import_serialized(&mut self, name: &Symbol, kb: &SerializedKnowledgeBase) {
-        for ser_module in &kb.modules {
-            let module = ser_module.into_module_with_root(self.symbols.clone(), name);
-            //println!("Importing: {}", self.symbols.normalize_full(&module.name));
-            self.insert(module);
+    pub fn remove(&mut self, name: &Symbol) {
+        self.modules.remove(&self.symbols.write().resolve(name));
+    }
+
+    pub fn import(&mut self, root: &Symbol, module: &PortableModule) {
+        let module = module.into_module_with_root(self.symbols.clone(), root);
+        //println!("Importing: {}", self.symbols.normalize_full(&module.name));
+        self.insert(module);
+    }
+
+    pub fn import_all(&mut self, name: &Symbol, portable_kb: &PortableKnowledgeBase) {
+        for portable_module in &portable_kb.modules {
+            self.import(name, portable_module);
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &SharedModule> {
+    pub fn iter(&self) -> impl Iterator<Item = &Module> {
         self.modules.values()
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedModule {
-    heap: SerializedHeap,
+pub struct PortableModule {
+    heap: PortableHeap,
     const_sets: Vec<(usize, Word, Vec<u8>)>,
     var_sets: Vec<Vec<u8>>,
     relations: Vec<Relation>,
-    name: SerializedSymbol,
+    name: PortableSymbol,
 }
 
-impl SerializedModule {
+impl PortableModule {
     pub fn from_module(module: &Module) -> Self {
-        let heap = SerializedHeap::from_heap(&module.heap);
+        let heap = PortableHeap::from_heap(&*module);
 
         let const_sets = module
+            .inner
             .const_sets
             .iter()
             .map(|((idx, word), bitset)| {
@@ -333,6 +348,7 @@ impl SerializedModule {
             .collect();
 
         let var_sets = module
+            .inner
             .var_sets
             .iter()
             .map(|bitset| {
@@ -345,8 +361,8 @@ impl SerializedModule {
             })
             .collect();
 
-        let relations = module.relations.clone();
-        let name = SerializedSymbol::from_symbol(&module.heap.symbols, &module.name);
+        let relations = module.inner.relations.clone();
+        let name = PortableSymbol::from_symbol(module.symbols(), module.name());
 
         Self {
             heap,
@@ -364,10 +380,9 @@ impl SerializedModule {
             .map(|(idx, word, bytes)| {
                 let mut word = *word;
                 if word.get_tag() == Tag::Const {
-                    let sym_index = symbols.resolve(
-                        self.heap.symbols[&word.get_value()]
-                            .into_name_with_root_module(&symbols, root),
-                    );
+                    let name = self.heap.symbols[&word.get_value()]
+                        .into_name_with_root_module(&symbols, root);
+                    let sym_index = symbols.write().resolve(name);
                     word = Word::r#const(sym_index);
                 }
 
@@ -393,27 +408,29 @@ impl SerializedModule {
         let heap = self.heap.into_heap_with_root_module(symbols, root);
 
         Module {
-            heap,
-            const_sets,
-            var_sets,
-            relations,
-            name,
+            inner: Arc::new(ModuleInner {
+                heap,
+                const_sets,
+                var_sets,
+                relations,
+                name,
+            }),
         }
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SerializedKnowledgeBase {
-    modules: Vec<SerializedModule>,
+pub struct PortableKnowledgeBase {
+    modules: Vec<PortableModule>,
 }
 
-impl SerializedKnowledgeBase {
+impl PortableKnowledgeBase {
     pub fn from_knowledge_base(knowledge_base: &KnowledgeBase) -> Self {
         Self {
             modules: knowledge_base
                 .modules
                 .values()
-                .map(|module| SerializedModule::from_module(&*module))
+                .map(|module| PortableModule::from_module(&*module))
                 .collect(),
         }
     }
@@ -428,10 +445,21 @@ impl SerializedKnowledgeBase {
             .iter()
             .map(|module| {
                 let module = module.into_module_with_root(symbols.clone(), root);
-                (symbols.resolve(&module.name), SharedModule::from(module))
+                let name = symbols.write().resolve(module.name());
+                (name, Module::from(module))
             })
             .collect();
 
         KnowledgeBase { symbols, modules }
     }
+}
+
+// The only purpose of this function is to fail compilation if these types do not
+// implement `Send + Sync`.
+#[allow(dead_code, unconditional_recursion)]
+fn assert_send_sync<T: Send + Sync>() {
+    assert_send_sync::<Module>();
+    assert_send_sync::<KnowledgeBase>();
+    assert_send_sync::<PortableModule>();
+    assert_send_sync::<PortableKnowledgeBase>();
 }

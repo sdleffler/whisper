@@ -2,7 +2,7 @@ use ::{
     derive_more::From,
     failure::Fail,
     std::{fs::File, io::Read, path::Path},
-    whisper::{knowledge_base::SerializedKnowledgeBase, prelude::*},
+    whisper::{knowledge_base::PortableKnowledgeBase, prelude::*},
 };
 
 #[derive(Debug, Fail, From)]
@@ -32,7 +32,7 @@ where
 
     let compiled_kb = whisper::trans::knowledge_base(&terms, &ir_kb);
     let mut file = File::create(output.as_ref())?;
-    let serialized_kb = SerializedKnowledgeBase::from_knowledge_base(&compiled_kb);
+    let serialized_kb = PortableKnowledgeBase::from_knowledge_base(&compiled_kb);
     bincode::serialize_into(&mut file, &serialized_kb)?;
 
     Ok(())

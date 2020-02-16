@@ -6,7 +6,7 @@ use crate::{
     },
     parse::{self, ParseError, QuasiVar},
     symbol::Path,
-    Ident, Name, Scope, Symbol, SymbolTable,
+    Ident, Name, Scope, Symbol, SymbolTable, SymbolTableInner,
 };
 
 use ::{
@@ -136,9 +136,11 @@ impl IrKnowledgeBase {
     }
 
     pub fn new_named_module<S: AsRef<str>>(&mut self, name: S) -> IrModuleRef {
+        let mut symbols_write = self.symbols.write();
+
         let handle = IrModuleRef(self.modules.len());
-        let scope = self.symbols.insert_unique_scope(name.as_ref());
-        let root = self.symbols.get_scope_metadata(scope).name.clone();
+        let scope = symbols_write.insert_unique_scope(name.as_ref());
+        let root = symbols_write.get_scope_metadata(scope).name.clone();
         self.modules.push_back(IrModule {
             entries: Vector::new(),
             exports: HashSet::new(),
@@ -187,6 +189,7 @@ pub struct IrImport {
 pub type IrImports = HashMap<Symbol, IrImport>;
 
 struct LinkModules<'ctx> {
+    symbols: &'ctx mut SymbolTableInner,
     modules: &'ctx mut IrKnowledgeBase,
     imports: &'ctx IrImports,
     new_root_scope: Scope,
@@ -199,13 +202,13 @@ impl<'ctx> Fold for LinkModules<'ctx> {
             return Some(cached.clone());
         }
 
-        let sym = self.modules.symbols.normalize(name);
+        let sym = self.symbols.normalize(name);
         //println!("Folding symbol {} => {:?}", sym, self.imports.get(&sym));
         if let Some(import) = self.imports.get(&sym) {
             let name = self.modules[import.from].path(import.path.clone());
-            let foreign = self.modules.symbols.normalize(name.clone());
+            let foreign = self.symbols.normalize(name.clone());
             let local = self.new_root_scope.symbol(sym.ident());
-            self.modules.symbols.alias(local.clone(), foreign);
+            self.symbols.alias(local.clone(), foreign);
 
             let local_name = Name::from(local);
             self.memo.insert(name, local_name.clone());
@@ -231,7 +234,9 @@ impl IrKnowledgeBase {
         let mut exports = self[root].exports.clone();
 
         let new_root_scope = self[new_module].get_scope();
+        let symbols = terms.symbol_table().clone();
         let mut link_modules = LinkModules {
+            symbols: &mut *symbols.write(),
             modules: self,
             imports,
             new_root_scope,

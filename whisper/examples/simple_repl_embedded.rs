@@ -4,7 +4,7 @@ use ::{
     std::io::{self, prelude::*},
     whisper::{
         ir::{IrKnowledgeBase, IrTermGraph},
-        Heap, SharedKnowledgeBase, SharedQuery, SimpleSession, Symbol, SymbolTable,
+        Heap, KnowledgeBase, SharedQuery, SimpleSession, Symbol, SymbolTable,
     },
 };
 
@@ -34,7 +34,7 @@ fn main() -> Result<(), Error> {
 
     println!("Compiled module IR:\n{:?}", modules[module]);
 
-    let kb = SharedKnowledgeBase::Owned(whisper::trans::knowledge_base(&terms, &modules));
+    let kb = whisper::trans::knowledge_base(&terms, &modules);
 
     println!(
         "Compiled knowledge base:\n{}",

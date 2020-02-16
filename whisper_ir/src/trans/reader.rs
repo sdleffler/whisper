@@ -85,7 +85,7 @@ impl<'re, R: TermReader<'re, View = R>> TermVisitor<'re, R> for ConstByIndex {
     type Value = ();
 
     fn visit_const(self, symbols: &SymbolTable, cst: Name) -> Self::Value {
-        if symbols.resolve(cst) == self.0 {
+        if symbols.write().resolve(cst) == self.0 {
             ()
         } else {
             todo!("error handling")
@@ -99,7 +99,7 @@ impl<'re, R: TermReader<'re, View = R>> TermVisitor<'re, R> for ConstByGlobal {
     type Value = ();
 
     fn visit_const(self, symbols: &SymbolTable, cst: Name) -> Self::Value {
-        let sym = symbols.normalize(cst);
+        let sym = symbols.write().normalize(cst);
         if sym.get_scope() == Scope::PUBLIC && sym.ident() == self.0 {
             ()
         } else {
@@ -114,7 +114,7 @@ impl<'re, R: TermReader<'re, View = R>> TermVisitor<'re, R> for NormalizedConst 
     type Value = Symbol;
 
     fn visit_const(self, symbols: &SymbolTable, cst: Name) -> Self::Value {
-        symbols.normalize(cst)
+        symbols.write().normalize(cst)
     }
 }
 
@@ -252,7 +252,7 @@ where
     type Value = Option<(H::Value, R)>;
 
     fn visit_const(self, symbols: &SymbolTable, cst: Name) -> Self::Value {
-        if symbols.resolve(cst) == Symbol::INTERNAL_LIST_NIL_INDEX {
+        if symbols.write().resolve(cst) == Symbol::INTERNAL_LIST_NIL_INDEX {
             None
         } else {
             todo!("error handling");

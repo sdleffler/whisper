@@ -93,7 +93,7 @@ impl<'heap> TermWriter for HeapWriter<'heap> {
 
     fn write_const(&mut self, name: &Name) {
         let heap_mut = self.heap.to_mut();
-        let index = heap_mut.symbols.resolve(name);
+        let index = heap_mut.symbols.write().resolve(name);
         heap_mut.words.push(Word::r#const(index));
     }
 

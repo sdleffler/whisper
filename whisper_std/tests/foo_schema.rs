@@ -11,19 +11,19 @@ use ::{
 };
 
 #[derive(Debug, Clone)]
-pub struct Schema(SharedKnowledgeBase);
+pub struct Schema(KnowledgeBase);
 
 impl Schema {
     pub fn from_str<S: AsRef<str> + ?Sized>(string: &S) -> Self {
         let mut terms = IrTermGraph::new(SymbolTable::new());
         let ir_kb = terms.parse_knowledge_base_str(string).expect("oops");
-        Self(whisper::trans::knowledge_base(&terms, &ir_kb).into())
+        Self(whisper::trans::knowledge_base(&terms, &ir_kb))
     }
 
     pub fn from_embedded(embedded: fn(&mut IrTermGraph) -> IrKnowledgeBase) -> Self {
         let mut terms = IrTermGraph::new(SymbolTable::new());
         let ir_kb = embedded(&mut terms);
-        Self(whisper::trans::knowledge_base(&terms, &ir_kb).into())
+        Self(whisper::trans::knowledge_base(&terms, &ir_kb))
     }
 }
 
@@ -115,15 +115,12 @@ fn validate_foo() -> Result<(), Error> {
     // First, we construct our validator from the knowledge base we made above.
     let mut schema = Schema::from_embedded(foo_schema);
 
-    let import_point = schema.0.symbol_table().normalize(Name {
+    let import_point = schema.0.symbol_table().write().normalize(Name {
         root: Symbol::MOD,
         path: im::vector![Ident::from("std"), Ident::from("map")],
     });
 
-    schema
-        .0
-        .to_mut()
-        .import_serialized(&import_point, whisper_std::map());
+    schema.0.import_all(&import_point, whisper_std::map());
 
     let mut validator = Validator::<FooConfig>::new(&schema);
 

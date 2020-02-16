@@ -1,15 +1,15 @@
 use crate::{
     heap::Heap,
-    knowledge_base::{Matches, SharedKnowledgeBase, SharedModule},
+    knowledge_base::{KnowledgeBase, Matches, Module},
     query::{QueryMap, SharedQuery},
     word::{Address, Tag, Word},
-    SymbolTable,
+    Symbol, SymbolIndex, SymbolTable,
 };
 
 use ::{
     failure::Fail,
     smallvec::SmallVec,
-    std::{fmt, ops::Index},
+    std::{collections::HashMap, fmt, ops::Index},
 };
 
 mod builtins;
@@ -37,7 +37,7 @@ pub struct GoalRef(usize);
 pub struct Goal {
     pub next: Option<GoalRef>,
     pub address: Word,
-    pub module: SharedModule,
+    pub module: ModuleIndex,
 }
 
 #[derive(Debug)]
@@ -92,7 +92,7 @@ impl Trail {
     }
 
     #[inline]
-    pub fn cons(&mut self, next: Option<GoalRef>, address: Word, module: SharedModule) -> GoalRef {
+    pub fn cons(&mut self, next: Option<GoalRef>, address: Word, module: ModuleIndex) -> GoalRef {
         let id = self.goals.len();
         self.goals.push(Goal {
             next,
@@ -105,7 +105,7 @@ impl Trail {
     #[inline]
     pub fn append<I>(&mut self, tail: Option<GoalRef>, goals: I) -> Option<GoalRef>
     where
-        I: IntoIterator<Item = (Word, SharedModule)>,
+        I: IntoIterator<Item = (Word, ModuleIndex)>,
         I::IntoIter: DoubleEndedIterator,
     {
         goals.into_iter().rev().fold(tail, |acc, (addr, module)| {
@@ -360,15 +360,67 @@ impl<S> Yield<S> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ModuleIndex(usize);
+
+#[derive(Debug)]
+pub struct ModuleCache {
+    knowledge: KnowledgeBase,
+    module_table: HashMap<SymbolIndex, ModuleIndex>,
+    modules: Vec<Module>,
+}
+
+impl Index<ModuleIndex> for ModuleCache {
+    type Output = Module;
+
+    fn index(&self, idx: ModuleIndex) -> &Module {
+        &self.modules[idx.0]
+    }
+}
+
+impl ModuleCache {
+    pub fn new(knowledge: KnowledgeBase) -> Self {
+        let mut this = Self {
+            knowledge,
+            module_table: HashMap::new(),
+            modules: Vec::new(),
+        };
+
+        this.module_table.insert(Symbol::MOD_INDEX, ModuleIndex(0));
+        this.modules.push(this.knowledge.get_root().clone());
+
+        this
+    }
+
+    pub fn get_or_insert(&mut self, scope: SymbolIndex) -> ModuleIndex {
+        match self.module_table.get(&scope).copied() {
+            Some(midx) => midx,
+            None => {
+                let midx = ModuleIndex(self.modules.len());
+                let module = self.knowledge.get(scope).unwrap().clone();
+
+                self.module_table.insert(scope, midx);
+                self.modules.push(module);
+
+                midx
+            }
+        }
+    }
+
+    pub fn get_root(&self) -> ModuleIndex {
+        ModuleIndex(0)
+    }
+}
+
 pub type SimpleSession = Session<NullHandler>;
 
 #[derive(Debug)]
 pub struct Session<E: ExternHandler> {
     heap: Heap,
-    knowledge: SharedKnowledgeBase,
     handler: E,
 
     symbols: SymbolTable,
+    modules: ModuleCache,
 
     unifier: UnificationStack,
     frames: SmallVec<[Frame<E::State>; 8]>,
@@ -377,13 +429,20 @@ pub struct Session<E: ExternHandler> {
     query_vars: QueryMap,
 }
 
+// Statically assert that `Session` is `Send + Sync`.
+#[allow(dead_code)]
+fn assert_session_send_and_sync<E: ExternHandler>() {
+    fn is_send_and_sync<T: Send + Sync>() {}
+    is_send_and_sync::<Session<E>>();
+}
+
 impl<H: ExternHandler + Default> Session<H>
 where
     H::State: Default,
 {
     /// Shortcut for constructing a new `Session` when your `Handler` and `State` types both
     /// implement `Default` and you don't want to specify other values for them.
-    pub fn new(symbols: SymbolTable, knowledge: SharedKnowledgeBase) -> Self {
+    pub fn new(symbols: SymbolTable, knowledge: KnowledgeBase) -> Self {
         Self::with_handler_and_state(symbols, knowledge, Default::default())
     }
 }
@@ -393,7 +452,7 @@ where
     H::State: Default,
 {
     /// Shortcut for constructing a new `Session` when your extern handler's `State` type has a useful default.
-    pub fn with_handler(symbols: SymbolTable, knowledge: SharedKnowledgeBase, handler: H) -> Self {
+    pub fn with_handler(symbols: SymbolTable, knowledge: KnowledgeBase, handler: H) -> Self {
         Self::with_handler_and_state(symbols, knowledge, handler)
     }
 }
@@ -402,17 +461,17 @@ impl<H: ExternHandler> Session<H> {
     /// Construct a new session with an external term handler and provide a starting state for the handler.
     pub fn with_handler_and_state(
         symbols: SymbolTable,
-        knowledge: SharedKnowledgeBase,
+        knowledge: KnowledgeBase,
         handler: H,
     ) -> Self {
         assert_eq!(&symbols, knowledge.symbol_table());
 
         Self {
             heap: Heap::new(symbols.clone()),
-            knowledge,
             handler,
 
             symbols,
+            modules: ModuleCache::new(knowledge),
 
             unifier: UnificationStack::new(),
             frames: SmallVec::new(),
@@ -439,8 +498,9 @@ impl<H: ExternHandler> Session<H> {
         self.unifier.clear();
 
         if !query.goals.is_empty() {
-            let module: SharedModule = self.knowledge.get_root().clone();
+            let module_idx = self.modules.get_root();
             let first_goal = query.goals.first().copied().unwrap();
+
             self.frames.push(Frame {
                 root_address: 0,
                 trail_point: self.trail.get(),
@@ -450,10 +510,10 @@ impl<H: ExternHandler> Session<H> {
                         .goals
                         .iter()
                         .copied()
-                        .map(|goal_addr| (goal_addr, module.clone())),
+                        .map(|goal_addr| (goal_addr, module_idx)),
                 ),
                 matches: match first_goal.get_tag() {
-                    Tag::StructRef => module.search(&query.heap, first_goal),
+                    Tag::StructRef => self.modules[module_idx].search(&query.heap, first_goal),
                     _ => Matches::empty(),
                 },
                 extern_state,
@@ -481,15 +541,21 @@ impl<H: ExternHandler> Session<H> {
 
             // We pick the first goal of the current stack frame and start matching against it.
             if let Some(goal) = frame.goals {
-                let goal_addr = self.trail[goal].address;
-                let goal_module = self.trail[goal].module.clone();
+                let Goal {
+                    next: next_goal,
+                    address: goal_ref,
+                    module: goal_module_idx,
+                } = self.trail[goal];
+
                 let undo_match = self.trail.get(); // This trail point lets us undo any change of state made by unification.
                 let undo_addr = self.heap.len();
 
-                //println!("goal: {}", self.heap.display_word(goal_addr));
+                //println!("goal: {}", self.heap.display_word(goal_ref));
 
                 'backtrack: loop {
-                    let (mut remaining_goals, mut extern_state) = match goal_addr.get_tag() {
+                    let goal_module = &self.modules[goal_module_idx];
+
+                    let (mut remaining_goals, mut extern_state) = match goal_ref.get_tag() {
                         Tag::StructRef => {
                             'matching: loop {
                                 let relation_id = match frame.matches.next() {
@@ -498,9 +564,8 @@ impl<H: ExternHandler> Session<H> {
                                 };
 
                                 let relation = &goal_module[relation_id];
-                                let head_ref =
-                                    self.heap.copy_relation_head(&goal_module, &relation);
-                                self.unifier.init(head_ref, goal_addr);
+                                let head_ref = self.heap.copy_relation_head(goal_module, &relation);
+                                self.unifier.init(head_ref, goal_ref);
 
                                 // println!(
                                 //     "Matching relation {:?} => {}... ",
@@ -528,7 +593,7 @@ impl<H: ExternHandler> Session<H> {
                                     continue 'matching;
                                 }
 
-                                self.heap.copy_relation_body(&goal_module, &relation);
+                                self.heap.copy_relation_body(goal_module, &relation);
 
                                 // Unification has succeeded. We need to  map the absolute addresses in the relation's source heap
                                 // address space to absolute addresses in the session heap, and then append those to the goal queue.
@@ -537,11 +602,10 @@ impl<H: ExternHandler> Session<H> {
                                         g.get_address() - relation.start.get_address() + undo_addr;
                                     let relocated_goal_word = g.with_address(relocated_addr);
 
-                                    (relocated_goal_word, goal_module.clone())
+                                    (relocated_goal_word, goal_module_idx)
                                 });
 
-                                let remaining_goals =
-                                    self.trail.append(self.trail[goal].next, relocated);
+                                let remaining_goals = self.trail.append(next_goal, relocated);
 
                                 // println!("Success.");
 
@@ -551,20 +615,23 @@ impl<H: ExternHandler> Session<H> {
                         _ => (frame.goals, frame.extern_state.clone()),
                     };
 
-                    let (goal_module, goal_addr) = 'finding_next_non_extern_goal: loop {
+                    let matches = 'finding_next_non_extern_goal: loop {
                         // println!("'finding_next_non_extern_goal");
 
                         if let Some(goal) = remaining_goals {
-                            let goal_ref = self.trail[goal].address;
+                            let Goal {
+                                address: goal_ref,
+                                module: goal_module_idx,
+                                ..
+                            } = self.trail[goal];
                             // println!("New goal `{}`; ", self.heap.display_word(goal_ref));
 
                             // Check to see if the newest goal is an extern or builtin goal.
                             let unfolded = match goal_ref.get_tag() {
                                 Tag::StructRef => {
-                                    break 'finding_next_non_extern_goal (
-                                        self.trail[goal].module.clone(),
-                                        goal_ref,
-                                    )
+                                    let matches =
+                                        self.modules[goal_module_idx].search(&self.heap, goal_ref);
+                                    break 'finding_next_non_extern_goal matches;
                                 }
                                 Tag::ExternRef => self.handler.handle_goal(GoalContext {
                                     context,
@@ -579,7 +646,7 @@ impl<H: ExternHandler> Session<H> {
                                     extern_handler: &self.handler,
                                     extern_context: context,
                                     extern_state: &mut extern_state,
-                                    knowledge: &mut self.knowledge,
+                                    modules: &mut self.modules,
                                     frame,
                                     heap: &mut self.heap,
                                     trail: &mut self.trail,
@@ -622,7 +689,6 @@ impl<H: ExternHandler> Session<H> {
                         }
                     };
 
-                    let matches = goal_module.search(&self.heap, goal_addr);
                     // A minor optimization: if the previous frame is on its last match candidate, we can safely reuse it
                     // in a sort of tail-call situation.
                     // TODO: `ExactSizeIterator::exact_size_is_empty` is unstable; this is the same for now.
@@ -687,7 +753,7 @@ pub struct GoalContext<'sesh, C: ?Sized, S> {
 }
 
 /// Describes the main hooks which can be registered to interact with `Extern` terms.
-pub trait ExternHandler: Sized {
+pub trait ExternHandler: Sized + Send + Sync {
     /// The `Context` type allows handlers to have per-resumption state they can inspect.
     type Context: ?Sized;
 
@@ -696,7 +762,7 @@ pub trait ExternHandler: Sized {
     ///
     /// The actual `State` value is kept in the `Frame` type. It should be cheap to clone,
     /// since it will be cloned by `Session::resume_with_context`.
-    type State: Clone;
+    type State: Send + Sync + Clone;
 
     /// Called when an `Extern` goal needs to be proved. This function allows an `Extern`
     /// goal to either fail or succeed and return a new goal list. A no-op implementation

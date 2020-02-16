@@ -782,7 +782,8 @@ impl Parse for IrModuleRef {
 
                 let child_module = with_graphs(|kb, _| {
                     name.root = kb[module].get_root().clone();
-                    kb.new_named_module_with_root(kb.symbol_table().normalize(name))
+                    let normalized_root = kb.symbol_table().write().normalize(name);
+                    kb.new_named_module_with_root(normalized_root)
                 });
 
                 let module_stream;

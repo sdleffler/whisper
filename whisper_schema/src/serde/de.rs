@@ -42,7 +42,7 @@ impl<'re, R: TermReader<'re, View = R>> TermVisitor<'re, R> for Data {
     }
 
     fn visit_const(self, symbols: &SymbolTable, name: Name) -> Self::Value {
-        match symbols.normalize(name) {
+        match symbols.write().normalize(name) {
             Symbol::UNIT => Datum::Unit,
             Symbol::NONE => Datum::None,
             Symbol::TRUE => Datum::Bool(true),

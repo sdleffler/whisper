@@ -3,7 +3,7 @@ use crate::{
     maybe_shared::MaybeShared,
     trans::HeapReader,
     word::{Address, Tag, UnpackedWord, Word, WordOffset},
-    Ident, Name, Scope, Symbol, SymbolTable,
+    Ident, Name, Scope, Symbol, SymbolIndex, SymbolTable,
 };
 
 use ::{
@@ -136,7 +136,7 @@ impl<'heap> fmt::Display for DisplayHeap<'heap> {
                 match word.unpack() {
                     UInt32(uint) => write!(f, "UInt:{:04x}", uint)?,
                     Int32(int) => write!(f, "Int: {:04x}", int)?,
-                    Const(c) => write!(f, "Cnst:{:04x}", c)?,
+                    Const(c) => write!(f, "Cnst:{:04x}", c.0)?,
                     Float32(n) => write!(f, "Fl32:{:04x}", n as u16)?,
                     StructArity(a) => write!(f, "StAr:{:04x}", a)?,
                     ExternArity(a) => write!(f, "ExAr:{:04x}", a)?,
@@ -162,7 +162,7 @@ impl<'heap> fmt::Display for DisplayHeap<'heap> {
         }
 
         writeln!(f, "SYM:")?;
-        for (i, symbol) in self.heap.symbols.iter().enumerate() {
+        for (i, symbol) in self.heap.symbols.write().iter().enumerate() {
             writeln!(f, "[{:04x}] {:?}", i, symbol)?;
         }
 
@@ -183,7 +183,7 @@ impl<'heap> fmt::Display for DisplayAt<'heap> {
             UInt32(i) => i.fmt(f),
             Int32(i) => i.fmt(f),
             Float32(v) => v.fmt(f),
-            Const(c) => write!(f, "\"{}\"", self.heap.symbol_table().lookup(c)),
+            Const(c) => write!(f, "\"{}\"", self.heap.symbol_table().read().lookup(c)),
             StructArity(arity) => {
                 let display = self.heap.words[self.addr + 1..][..arity]
                     .iter()
@@ -248,7 +248,7 @@ impl<'heap> fmt::Display for DisplayWord<'heap> {
             UInt32(i) => i.fmt(f),
             Int32(i) => i.fmt(f),
             Float32(v) => v.fmt(f),
-            Const(c) => write!(f, "\"{}\"", self.heap.symbol_table().lookup(c)),
+            Const(c) => write!(f, "\"{}\"", self.heap.symbol_table().read().lookup(c)),
             StructArity(arity) => write!(f, "StrA({})", arity),
             ExternArity(arity) => write!(f, "ExtA({})", arity),
             BinaryArity(arity) => write!(f, "BinA({})", arity),
@@ -297,22 +297,22 @@ impl Heap {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedSymbol {
+pub struct PortableSymbol {
     scope_id: u64,
     path: Vec<String>,
 }
 
-impl SerializedSymbol {
+impl PortableSymbol {
     pub fn from_name(full_name: &Name) -> Self {
         assert!(full_name.root.get_scope().is_reserved());
         //println!("Serializing name: {}", full_name);
         let path = full_name.path.iter().map(ToString::to_string).collect();
         let scope_id = full_name.root.get_scope().get_id();
-        SerializedSymbol { scope_id, path }
+        PortableSymbol { scope_id, path }
     }
 
     pub fn from_symbol(symbols: &SymbolTable, symbol: &Symbol) -> Self {
-        let full_name = symbols.normalize_full(symbol);
+        let full_name = symbols.write().normalize_full(symbol);
         Self::from_name(&full_name)
     }
 
@@ -329,7 +329,7 @@ impl SerializedSymbol {
         let root = if scope == Scope::MOD {
             root.clone()
         } else {
-            symbols.get_scope_metadata(scope).name.clone()
+            symbols.read().get_scope_metadata(scope).name.clone()
         };
 
         let path = self.path.iter().map(|s| Ident::from(&**s)).collect();
@@ -344,29 +344,34 @@ impl SerializedSymbol {
     // }
 
     pub fn into_symbol_with_root_module(&self, symbols: &SymbolTable, root: &Symbol) -> Symbol {
-        symbols.normalize(self.into_name_with_root_module(symbols, root))
+        symbols
+            .write()
+            .normalize(self.into_name_with_root_module(symbols, root))
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedHeap {
-    pub symbols: HashMap<u64, SerializedSymbol>,
+pub struct PortableHeap {
+    pub symbols: HashMap<u64, PortableSymbol>,
     pub words: Vec<Word>,
 }
 
-impl SerializedHeap {
+impl PortableHeap {
     pub fn from_heap(heap: &Heap) -> Self {
         let mut symbols = HashMap::new();
         let words = heap.words.clone();
 
         for &word in words.iter() {
             if word.get_tag() == Tag::Const && !symbols.contains_key(&word.get_value()) {
-                let full_name = heap.symbols.lookup_full(word.get_value() as usize);
-                symbols.insert(word.get_value(), SerializedSymbol::from_name(&full_name));
+                let full_name = heap
+                    .symbols
+                    .read()
+                    .lookup_full(SymbolIndex(word.get_value() as usize));
+                symbols.insert(word.get_value(), PortableSymbol::from_name(&full_name));
             }
         }
 
-        SerializedHeap { symbols, words }
+        PortableHeap { symbols, words }
     }
 
     // pub fn into_heap(&self, symbols: SymbolTable) -> Heap {
@@ -388,13 +393,22 @@ impl SerializedHeap {
 
         for word in words.iter_mut() {
             if word.get_tag() == Tag::Const {
-                let sym_index = symbols.resolve(
-                    self.symbols[&word.get_value()].into_name_with_root_module(&symbols, root),
-                );
+                let name =
+                    self.symbols[&word.get_value()].into_name_with_root_module(&symbols, root);
+                let sym_index = symbols.write().resolve(name);
                 *word = Word::r#const(sym_index);
             }
         }
 
         Heap { symbols, words }
     }
+}
+
+// The only purpose of this function is to fail compilation if these types do not
+// implement `Send + Sync`.
+#[allow(dead_code, unconditional_recursion)]
+fn assert_send_sync<T: Send + Sync>() {
+    assert_send_sync::<Heap>();
+    assert_send_sync::<PortableSymbol>();
+    assert_send_sync::<PortableHeap>();
 }
