@@ -291,7 +291,9 @@ impl IrNode {
     pub fn to_json(&self, terms: &IrTermGraph) -> JsonValue {
         match self {
             IrNode::Var(var) => json!({ "Var": var.to_string() }),
-            IrNode::Const(name) => json!({ "Const": name.to_string() }),
+            IrNode::Const(name) => {
+                json!({ "Const": terms.symbols().read().display_name(name).to_string() })
+            }
             IrNode::Ref(ir_ref) => json! ({ "Ref": ir_ref.to_json(terms) }),
             IrNode::Int32(i) => json!({ "Int32": i }),
             IrNode::UInt32(u) => json!({ "UInt32": u }),

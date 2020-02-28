@@ -1,4 +1,5 @@
 #![deny(mutable_borrow_reservation_conflict)]
+#![feature(option_unwrap_none)]
 
 pub mod graph;
 #[macro_use]
@@ -11,7 +12,7 @@ pub mod proc_macro;
 
 pub use crate::{
     graph::*,
-    symbol::{Ident, Name, Scope, Symbol, SymbolIndex, SymbolTable, SymbolTableInner, Var},
+    symbol::{Ident, Name, Symbol, SymbolIndex, SymbolTable, SymbolTableInner, Var},
 };
 
 #[doc(hidden)]

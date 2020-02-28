@@ -12,7 +12,7 @@ pub use reader::HeapReader;
 pub use writer::HeapWriter;
 
 use crate::{
-    heap::{Heap, SharedHeap},
+    heap::Heap,
     knowledge_base::{KnowledgeBase, Module, Relation},
     query::Query,
 };
@@ -36,11 +36,7 @@ pub fn query(terms: &IrTermGraph, query: &IrQuery, mut heap: Heap) -> Query {
 
     let vars = emitter.get_var_scope(var_scope).to_query_map();
 
-    Query {
-        heap: SharedHeap::Owned(heap),
-        goals,
-        vars,
-    }
+    Query { heap, goals, vars }
 }
 
 pub fn module(terms: &IrTermGraph, module: &IrModule, mut heap: Heap) -> Module {
@@ -78,7 +74,7 @@ pub fn module(terms: &IrTermGraph, module: &IrModule, mut heap: Heap) -> Module 
         });
     }
 
-    Module::from_mapped_heap(module.get_root().clone(), heap, relations)
+    Module::from_mapped_heap(module.root().clone(), heap, relations)
 }
 
 pub fn knowledge_base(terms: &IrTermGraph, ir_modules: &IrKnowledgeBase) -> KnowledgeBase {

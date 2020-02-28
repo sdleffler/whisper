@@ -1,5 +1,5 @@
 use crate::{
-    heap::SharedHeap,
+    heap::Heap,
     maybe_shared::MaybeShared,
     word::{Address, Word},
     Ident,
@@ -20,13 +20,13 @@ pub type QueryMap = OrdMap<Ident, Address>;
 /// [`KnowledgeBase`]: crate::knowledge_base::KnowledgeBase
 #[derive(Debug, Clone)]
 pub struct Query {
-    pub(crate) heap: SharedHeap<'static>,
-    pub(crate) goals: SmallVec<[Word; 8]>,
-    pub(crate) vars: QueryMap,
+    pub heap: Heap,
+    pub goals: SmallVec<[Word; 8]>,
+    pub vars: QueryMap,
 }
 
 impl Deref for Query {
-    type Target = SharedHeap<'static>;
+    type Target = Heap;
 
     fn deref(&self) -> &Self::Target {
         &self.heap
@@ -41,5 +41,13 @@ impl fmt::Display for Query {
             writeln!(f, "[GOAL{}] {}", i, self.heap.display_word(goal))?;
         }
         Ok(())
+    }
+}
+
+impl Query {
+    pub fn clear(&mut self) {
+        self.heap.clear();
+        self.goals.clear();
+        self.vars.clear();
     }
 }

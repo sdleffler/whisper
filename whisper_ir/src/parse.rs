@@ -19,7 +19,7 @@ use crate::{
         IrCompoundKind, IrGoal, IrKnowledgeBase, IrModuleEntry, IrModuleRef, IrNode, IrQuery,
         IrRef, IrRelation, IrTermGraph,
     },
-    Ident, Name, Symbol, SymbolTable, Var,
+    Ident, Name, SymbolIndex, SymbolTable, Var,
 };
 
 #[cfg(test)]
@@ -98,7 +98,7 @@ fn new_compound(kind: IrCompoundKind, args: impl Into<Vector<IrNode>>) -> IrRef 
 fn new_let(lhs: IrRef, rhs: IrRef) -> IrRef {
     with_graphs(|_, terms| {
         terms.new_opaque(im::vector![
-            IrNode::Const(Symbol::LET.into()),
+            IrNode::Const(SymbolIndex::LET.into()),
             IrNode::Ref(lhs),
             IrNode::Ref(rhs),
         ])
@@ -108,7 +108,7 @@ fn new_let(lhs: IrRef, rhs: IrRef) -> IrRef {
 fn new_is(lhs: IrRef, rhs: IrRef) -> IrRef {
     with_graphs(|_, terms| {
         terms.new_opaque(im::vector![
-            IrNode::Const(Symbol::IS.into()),
+            IrNode::Const(SymbolIndex::IS.into()),
             IrNode::Ref(lhs),
             IrNode::Ref(rhs),
         ])
@@ -118,7 +118,7 @@ fn new_is(lhs: IrRef, rhs: IrRef) -> IrRef {
 fn new_try_in(term: IrRef, module: IrNode) -> IrRef {
     with_graphs(|_, terms| {
         terms.new_opaque(im::vector![
-            IrNode::Const(Symbol::TRY.into()),
+            IrNode::Const(SymbolIndex::TRY.into()),
             IrNode::Ref(term),
             module,
         ])
@@ -126,7 +126,7 @@ fn new_try_in(term: IrRef, module: IrNode) -> IrRef {
 }
 
 fn new_cut() -> IrRef {
-    with_graphs(|_, terms| terms.new_opaque(im::vector![IrNode::Const(Symbol::CUT.into())]))
+    with_graphs(|_, terms| terms.new_opaque(im::vector![IrNode::Const(SymbolIndex::CUT.into())]))
 }
 
 pub(crate) fn set_module(ir_mod: IrModuleRef) {
@@ -262,14 +262,14 @@ impl Parse for Name {
             let lookahead = input.lookahead1();
             let mut name = if lookahead.peek(Token![self]) {
                 input.parse::<Token![self]>()?;
-                let root = with_graphs(|modules, _| modules[get_module()].get_root().clone());
+                let root = with_graphs(|modules, _| modules[get_module()].root().clone());
                 Name {
                     root,
                     path: Vector::new(),
                 }
             } else if lookahead.peek(Token![super]) {
                 input.parse::<Token![super]>()?;
-                let root = with_graphs(|modules, _| modules[get_module()].get_root().clone());
+                let root = with_graphs(|modules, _| modules[get_module()].root().clone());
                 Name {
                     root,
                     path: im::vector![ident_internal!("super")],
@@ -283,7 +283,7 @@ impl Parse for Name {
                 };
 
                 Name {
-                    root: Symbol::PUBLIC,
+                    root: SymbolIndex::PUBLIC,
                     path: im::vector![ident],
                 }
             };
@@ -458,7 +458,8 @@ impl Parse for IrNode {
             loop {
                 if list_terms.is_empty() {
                     let consed = with_graphs(|_, terms| {
-                        let tail = tail.unwrap_or(IrNode::Const(Symbol::INTERNAL_LIST_NIL.into()));
+                        let tail =
+                            tail.unwrap_or(IrNode::Const(SymbolIndex::INTERNAL_LIST_NIL.into()));
                         heads
                             .into_iter()
                             .rev()
@@ -487,7 +488,8 @@ impl Parse for IrNode {
             loop {
                 if map_terms.is_empty() {
                     let consed = with_graphs(|_, terms| {
-                        let tail = tail.unwrap_or(IrNode::Const(Symbol::INTERNAL_MAP_NIL.into()));
+                        let tail =
+                            tail.unwrap_or(IrNode::Const(SymbolIndex::INTERNAL_MAP_NIL.into()));
                         heads.into_iter().rev().fold(tail, |acc, (key, val)| {
                             IrNode::Ref(terms.new_cons2(key, val, acc))
                         })
@@ -559,8 +561,8 @@ impl Parse for IrRef {
                 }
 
                 let mut kb = input.parse::<Name>()?;
-                if kb.root == Symbol::PUBLIC {
-                    kb.root = Symbol::MOD;
+                if kb.root == SymbolIndex::PUBLIC {
+                    kb.root = SymbolIndex::MOD;
                 }
 
                 Ok(new_try_in(
@@ -746,7 +748,7 @@ impl Parse for IrModuleRef {
             //     input.parse::<Token![::]>()?;
             //     Symbol::PUBLIC
             // } else {
-            //     with_graphs(|modules, _| modules[module].get_root().clone())
+            //     with_graphs(|modules, _| modules[module].root().clone())
             // };
 
             // let initial = input.parse::<UseTree>()?;
@@ -776,14 +778,14 @@ impl Parse for IrModuleRef {
             } else if lookahead.peek(Token![mod]) {
                 input.parse::<Token![mod]>()?;
                 let mut name = input.parse::<Name>()?;
-                if name.root == Symbol::PUBLIC {
-                    name.root = Symbol::MOD;
+                if name.root == SymbolIndex::PUBLIC {
+                    name.root = SymbolIndex::MOD;
                 }
 
                 let child_module = with_graphs(|kb, _| {
-                    name.root = kb[module].get_root().clone();
-                    let normalized_root = kb.symbols().write().normalize(name);
-                    kb.new_named_module_with_root(normalized_root)
+                    name.root = kb[module].root();
+                    let normalized_root = kb.symbols().write().insert_name(name);
+                    kb.module(normalized_root)
                 });
 
                 let module_stream;
@@ -812,7 +814,7 @@ impl Parse for IrModuleRef {
 #[doc(hidden)]
 impl Parse for IrKnowledgeBase {
     fn parse(input: ParseStream) -> Result<Self> {
-        let module_ref = with_graphs(|kb, _| kb.new_named_module_with_root(Symbol::MOD));
+        let module_ref = with_graphs(|kb, _| kb.module(SymbolIndex::MOD));
 
         while !input.is_empty() {
             set_module(module_ref);

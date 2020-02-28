@@ -1,7 +1,7 @@
 use crate::{
     knowledge_base::{Module, Relation},
     maybe_shared::MaybeShared,
-    trans::HeapReader,
+    trans::{HeapReader, HeapWriter},
     word::{Address, Tag, UnpackedWord, Word, WordOffset},
     Ident, Name, Scope, Symbol, SymbolIndex, SymbolTable,
 };
@@ -114,6 +114,10 @@ impl Heap {
 
     pub fn read_at(&self, addr: Address) -> HeapReader {
         HeapReader::new(&self, slice::from_ref(&self[addr]))
+    }
+
+    pub fn write_top(&mut self) -> HeapWriter {
+        HeapWriter::from(self)
     }
 }
 
@@ -304,14 +308,14 @@ pub struct PortableSymbol {
 
 impl PortableSymbol {
     pub fn from_name(full_name: &Name) -> Self {
-        assert!(full_name.root.get_scope().is_reserved());
+        assert!(full_name.root.scope().is_reserved());
         //println!("Serializing name: {}", full_name);
         let path = full_name.path.iter().map(ToString::to_string).collect();
-        let scope_id = full_name.root.get_scope().get_id();
+        let scope_id = full_name.root.scope().get_id();
         PortableSymbol { scope_id, path }
     }
 
-    pub fn from_symbol(symbols: &SymbolTable, symbol: &Symbol) -> Self {
+    pub fn from_symbol(symbols: &SymbolTable, symbol: SymbolIndex) -> Self {
         let full_name = symbols.write().normalize_full(symbol);
         Self::from_name(&full_name)
     }
@@ -323,13 +327,13 @@ impl PortableSymbol {
     //     Name { root, path }
     // }
 
-    pub fn into_name_with_root_module(&self, symbols: &SymbolTable, root: &Symbol) -> Name {
+    pub fn into_name_with_root_module(&self, symbols: &SymbolTable, root: SymbolIndex) -> Name {
         let scope = Scope::from_id(self.scope_id);
 
         let root = if scope == Scope::MOD {
             root.clone()
         } else {
-            symbols.read().get_scope_metadata(scope).name.clone()
+            symbols.read().get_scope_metadata(scope).name
         };
 
         let path = self.path.iter().map(|s| Ident::from(&**s)).collect();

@@ -1,7 +1,7 @@
-use ::im::Vector;
+use ::{im::Vector, std::mem};
 
 use crate::{
-    graph::{Blob, IrCompoundKind, IrNode, IrRef, IrTermGraph},
+    graph::{Blob, IrCompoundKind, IrNode, IrTermGraph},
     trans::{CompoundKind, TermWriter},
     Name, Var,
 };
@@ -20,7 +20,8 @@ pub struct PlacementId(usize);
 
 #[derive(Debug, Clone)]
 pub enum Placement {
-    Full(IrRef),
+    Full(IrNode),
+    Boxed(Option<NodeId>),
     Compound {
         args: Vec<NodeId>,
         kind: CompoundKind,
@@ -42,13 +43,6 @@ impl Placement {
             _ => unreachable!(),
         }
     }
-
-    fn unwrap_args_mut(&mut self) -> &mut Vec<NodeId> {
-        match self {
-            Placement::Compound { args, .. } => args,
-            _ => unreachable!(),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -63,15 +57,28 @@ impl<'graph> TermGraphWriter<'graph> {
     fn push_to_top(&mut self, node: impl Into<Option<Node>>) -> NodeId {
         let id = NodeId(self.nodes.len());
         self.nodes.push(node.into());
-        self.placements[self.stack.last().unwrap().0]
-            .unwrap_args_mut()
-            .push(id);
+
+        match &mut self.placements[self.stack.last().unwrap().0] {
+            Placement::Compound { args, .. } => args.push(id),
+            Placement::Boxed(val) => mem::replace(val, Some(id)).unwrap_none(),
+            _ => unreachable!("cannot push to blob or full placement"),
+        }
+
         id
     }
 
-    fn write_to_graph(&mut self, placement_id: PlacementId) -> IrRef {
-        if let Placement::Full(ir_ref) = &self.placements[placement_id.0] {
-            *ir_ref
+    fn write_to_graph(&mut self, placement_id: PlacementId) -> IrNode {
+        if let Placement::Full(ir_node) = &self.placements[placement_id.0] {
+            ir_node.clone()
+        } else if let Placement::Boxed(val) = &self.placements[placement_id.0] {
+            let node_id = val.expect("unfilled box");
+            let node = match self.nodes[node_id.0].clone().expect("unresolved node") {
+                Node::Full(full) => full,
+                Node::Ref(placement_id) => self.write_to_graph(placement_id),
+            };
+
+            self.placements[placement_id.0] = Placement::Full(node.clone());
+            node
         } else {
             let mut args = Vector::new();
             let (arity, kind) = match self.placements[placement_id.0].unwrap_compound_kind() {
@@ -87,15 +94,15 @@ impl<'graph> TermGraphWriter<'graph> {
                 let node_id = self.placements[placement_id.0].unwrap_args_ref()[i];
                 let node = match self.nodes[node_id.0].clone().expect("unresolved node") {
                     Node::Full(full) => full,
-                    Node::Ref(placement_id) => IrNode::Ref(self.write_to_graph(placement_id)),
+                    Node::Ref(placement_id) => self.write_to_graph(placement_id),
                 };
 
                 args.push_back(node);
             }
 
-            let ir_ref = self.terms.new_compound(kind, args);
-            self.placements[placement_id.0] = Placement::Full(ir_ref);
-            ir_ref
+            let ir_node = IrNode::Ref(self.terms.new_compound(kind, args));
+            self.placements[placement_id.0] = Placement::Full(ir_node.clone());
+            ir_node
         }
     }
 }
@@ -134,6 +141,17 @@ impl<'graph> TermWriter for TermGraphWriter<'graph> {
         self.push_to_top(Node::Ref(*placement));
     }
 
+    fn push_box(&mut self) -> PlacementId {
+        let placement_id = PlacementId(self.placements.len());
+        self.placements.push(Placement::Boxed(None));
+        self.stack.push(placement_id);
+        placement_id
+    }
+
+    fn pop_box(&mut self) {
+        self.stack.pop();
+    }
+
     fn push_compound(&mut self, kind: CompoundKind) -> PlacementId {
         let placement_id = PlacementId(self.placements.len());
         self.placements.push(Placement::Compound {
@@ -160,15 +178,15 @@ impl<'graph> TermWriter for TermGraphWriter<'graph> {
 
     fn fill(&mut self, hole: NodeId, placement_id: &PlacementId) {
         let node = match &self.placements[placement_id.0] {
-            Placement::Full(ir_ref) => Node::Full(IrNode::Ref(*ir_ref)),
+            Placement::Full(ir_node) => Node::Full(ir_node.clone()),
             Placement::Blob(blob) => Node::Full(IrNode::Blob(blob.clone())),
-            Placement::Compound { .. } => Node::Ref(*placement_id),
+            Placement::Boxed(_) | Placement::Compound { .. } => Node::Ref(*placement_id),
         };
 
         self.nodes[hole.0] = Some(node);
     }
 
-    type Output = IrRef;
+    type Output = IrNode;
     fn get(&mut self, placement_id: &PlacementId) -> Self::Output {
         self.write_to_graph(*placement_id)
     }

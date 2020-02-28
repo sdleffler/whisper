@@ -70,7 +70,7 @@ fn query_foo() {
         corge: true,
         bar: Bar::Baz(42),
     });
-    let ir_query = validator_query(&mut terms, modules[validator_mod].get_root(), foo_addr);
+    let ir_query = validator_query(&mut terms, modules[validator_mod].root(), foo_addr);
     let query = SharedQuery::from(builder.finish(&terms, &ir_query));
 
     session.load(query);
@@ -87,7 +87,7 @@ fn query_foo() {
     let heap = Heap::new(symbol_table.clone());
     let mut builder = QueryBuilder::new(heap);
     let foo_addr = builder.bind(&Option::<bool>::None);
-    let ir_query = validator_query(&mut terms, modules[validator_mod].get_root(), foo_addr);
+    let ir_query = validator_query(&mut terms, modules[validator_mod].root(), foo_addr);
     let query = SharedQuery::from(builder.finish(&terms, &ir_query));
 
     session.load(query);

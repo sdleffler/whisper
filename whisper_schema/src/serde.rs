@@ -19,8 +19,8 @@ pub enum Error {
     #[fail(display = "{}", _0)]
     Message(String),
 
-    #[fail(display = "cannot deserialize from terms with unbound variables")]
-    TermMustBeGrounded,
+    #[fail(display = "unexpected free variable in input")]
+    UnexpectedVariable,
 
     #[fail(display = "deserialize_any only supports constants, i32, u32, and f32")]
     DeserializeAnyNotSupported,
@@ -33,6 +33,9 @@ pub enum Error {
 
     #[fail(display = "invalid input")]
     Invalid,
+
+    #[fail(display = "`AsU64` variable option does not support anonymous variables")]
+    AnonymousVariablesNotSupported,
 }
 
 #[derive(Debug, Display, From, Into)]

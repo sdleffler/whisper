@@ -4,7 +4,7 @@
       "modules": [
         {
           "entries": [],
-          "root": "mod$MOD"
+          "root": "mod$mod"
         },
         {
           "entries": [
@@ -78,7 +78,7 @@
               }
             }
           ],
-          "root": "member$MOD"
+          "root": "member$mod"
         },
         {
           "entries": [
@@ -170,7 +170,7 @@
               }
             }
           ],
-          "root": "append$MOD"
+          "root": "append$mod"
         },
         {
           "entries": [
@@ -204,7 +204,7 @@
                       }
                     },
                     {
-                      "Const": "prefix$MOD::super::append"
+                      "Const": "prefix$mod::super::append"
                     }
                   ],
                   "kind": "Opaque"
@@ -226,7 +226,7 @@
               }
             }
           ],
-          "root": "prefix$MOD"
+          "root": "prefix$mod"
         }
       ]
     }

@@ -13,11 +13,11 @@
 
 use crate::{
     graph::{IrGoal, IrModuleEntry, IrNode, IrQuery, IrRef, IrRelation, IrTermGraph},
-    Ident, Name, Scope, Symbol, Var,
+    Ident, Name, SymbolIndex, Var,
 };
 
 pub trait Fold {
-    fn fold_symbol(&mut self, ir_graph: &mut IrTermGraph, sym: &Symbol) -> Option<Symbol> {
+    fn fold_symbol(&mut self, ir_graph: &mut IrTermGraph, sym: SymbolIndex) -> Option<SymbolIndex> {
         fold_symbol(self, ir_graph, sym)
     }
 
@@ -34,10 +34,6 @@ pub trait Fold {
     }
 
     fn fold_ident(&mut self, _ir_graph: &mut IrTermGraph, _ident: &Ident) -> Option<Ident> {
-        None
-    }
-
-    fn fold_scope(&mut self, _ir_graph: &mut IrTermGraph, _atom: &Scope) -> Option<Scope> {
         None
     }
 
@@ -82,7 +78,11 @@ pub trait Fold {
     }
 }
 
-pub fn fold_symbol<V>(_v: &mut V, _ir_graph: &mut IrTermGraph, _sym: &Symbol) -> Option<Symbol>
+pub fn fold_symbol<V>(
+    _v: &mut V,
+    _ir_graph: &mut IrTermGraph,
+    _sym: SymbolIndex,
+) -> Option<SymbolIndex>
 where
     V: Fold + ?Sized,
 {
@@ -93,7 +93,7 @@ pub fn fold_name<V>(v: &mut V, ir_graph: &mut IrTermGraph, name: &Name) -> Optio
 where
     V: Fold + ?Sized,
 {
-    let maybe_root = v.fold_symbol(ir_graph, &name.root);
+    let maybe_root = v.fold_symbol(ir_graph, name.root);
     let mut path = name.path.clone();
     let mut focus = path.focus_mut();
     for i in 0..focus.len() {
@@ -105,7 +105,7 @@ where
     // See `fold_relation` for an explanation of this trick.
     if maybe_root.is_some() || !path.ptr_eq(&name.path) {
         Some(Name {
-            root: maybe_root.unwrap_or_else(|| name.root.clone()),
+            root: maybe_root.unwrap_or(name.root),
             path,
         })
     } else {

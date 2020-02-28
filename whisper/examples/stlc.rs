@@ -83,7 +83,7 @@ impl Typechecker {
         stlc(&mut terms, &mut modules, stlc_module);
         modules.link(&mut terms, stlc_module);
 
-        let root = modules[stlc_module].get_root().clone();
+        let root = modules[stlc_module].root().clone();
 
         let stlc_kb = whisper::trans::knowledge_base(&terms, &modules);
         println!(

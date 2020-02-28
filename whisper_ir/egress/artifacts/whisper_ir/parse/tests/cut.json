@@ -71,7 +71,7 @@
               }
             }
           ],
-          "root": "mod$MOD"
+          "root": "mod$mod"
         }
       ]
     }

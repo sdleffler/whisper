@@ -63,6 +63,8 @@ pub use whisper_derive::*;
 #[doc(hidden)]
 pub use im::vector;
 
+pub use whisper_ir::atom;
+
 pub mod prelude {
     pub use crate::{
         builder::QueryBuilder,
@@ -73,4 +75,8 @@ pub mod prelude {
     };
 
     pub use whisper_ir::{graph::*, Ident, Name, Scope, Symbol, SymbolIndex, SymbolTable, Var};
+}
+
+pub mod schema {
+    pub use whisper_schema::serde::{de, ser, Error};
 }

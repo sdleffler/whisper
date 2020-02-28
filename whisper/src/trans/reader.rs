@@ -1,8 +1,10 @@
 use std::ops::Range;
 
 use whisper_ir::{
+    atom,
     graph::Blob,
     trans::{CompoundKind, TermReader, TermVisitor},
+    Ident,
 };
 
 use crate::{
@@ -152,7 +154,10 @@ impl<'heap> TermReader<'heap> for HeapReader<'heap> {
             )),
             Float32(f) => Some(v.visit_f32(f)),
             StructArity(_) | ExternArity(_) | BinaryArity(_) | OpaqueArity(_) => unreachable!(),
-            Var(addr) => Some(v.visit_var(whisper_ir::Var::Named(format!("0x{:x}?", addr).into()))),
+            Var(addr) => Some(v.visit_var(whisper_ir::Var::Named(Ident::from_parts(
+                atom!(""),
+                addr as u64,
+            )))),
             Tagged(addr) => Some(self.read_tagged(v, addr)),
             Cons(addr) => Some(self.read_cons(v, addr)),
             Cons2(addr) => Some(self.read_cons2(v, addr)),

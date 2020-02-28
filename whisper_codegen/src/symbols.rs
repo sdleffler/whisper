@@ -1,6 +1,7 @@
 use ::{
     proc_macro2::TokenStream,
     quote::{format_ident, quote, ToTokens},
+    std::cmp::Ord,
     string_cache_codegen::AtomType,
     syn::{
         parse::{Parse, ParseStream, Result},
@@ -50,15 +51,27 @@ impl Parse for SymbolSet {
 }
 
 pub struct SymbolEntry {
+    is_reserved: bool,
     name: LitStr,
     set: SymbolSet,
 }
 
 impl Parse for SymbolEntry {
     fn parse(input: ParseStream) -> Result<Self> {
+        let is_reserved = if input.peek(Token![super]) {
+            input.parse::<Token![super]>()?;
+            true
+        } else {
+            false
+        };
+
         let set = input.parse()?;
         let name = input.parse()?;
-        Ok(SymbolEntry { name, set })
+        Ok(SymbolEntry {
+            is_reserved,
+            name,
+            set,
+        })
     }
 }
 
@@ -99,10 +112,15 @@ impl Parse for Input {
 }
 
 pub fn reserved_symbols(input: TokenStream) -> TokenStream {
-    let input: Input = match syn::parse2(input) {
+    let mut input: Input = match syn::parse2(input) {
         Ok(v) => v,
         Err(err) => return TokenStream::from(err.to_compile_error()),
     };
+
+    input
+        .reserved
+        .symbols
+        .sort_by(|e1, e2| e1.is_reserved.cmp(&e2.is_reserved).reverse());
 
     let string_cache: TokenStream = {
         let mut string_cache_raw = Vec::new();
@@ -122,12 +140,19 @@ pub fn reserved_symbols(input: TokenStream) -> TokenStream {
     };
 
     let mut symbol_list = Vec::new();
-    let mut symbol_id_list = Vec::new();
     let mut symbol_constants = Vec::new();
+    let mut index_constants = Vec::new();
     let atom_macro = &input.atom_macro;
+
+    let mut reserved_count = 0usize;
 
     for entry in &input.reserved.symbols {
         use SymbolSet::*;
+
+        if entry.is_reserved {
+            reserved_count += 1;
+        }
+
         let constant_name = &entry.name;
 
         let name_string = match entry.name.value() {
@@ -145,21 +170,19 @@ pub fn reserved_symbols(input: TokenStream) -> TokenStream {
         };
 
         let constant_id = match entry.set {
-            Public => quote!(Scope::PUBLIC),
-            Internal => quote!(Scope::INTERNAL),
-            Module => quote!(Scope::MOD),
+            Public => quote!(SymbolIndex::PUBLIC),
+            Internal => quote!(SymbolIndex::INTERNAL),
+            Module => quote!(SymbolIndex::MOD),
         };
 
         let constant_value =
             quote!(Symbol::new(Ident::from_atom(#atom_macro!(#constant_name)), #constant_id));
         symbol_constants.push(quote!(pub const #constant_ident: Symbol = #constant_value;));
 
-        let id = symbol_id_list.len();
-        let id_name = format_ident!("{}_INDEX", constant_ident);
-        symbol_constants.push(quote!(pub const #id_name: SymbolIndex = SymbolIndex(#id);));
+        let id = symbol_list.len();
+        index_constants.push(quote!(pub const #constant_ident: SymbolIndex = SymbolIndex(#id, 0);));
 
         symbol_list.push(constant_ident);
-        symbol_id_list.push(id_name);
     }
 
     let num_builtins = symbol_list.len();
@@ -171,7 +194,12 @@ pub fn reserved_symbols(input: TokenStream) -> TokenStream {
             #(#symbol_constants)*
         }
 
+        impl SymbolIndex {
+            #(#index_constants)*
+        }
+
         const NUM_BUILTINS: usize = #num_builtins;
+        const NUM_RESERVED: usize = #reserved_count;
 
         lazy_static::lazy_static! {
             static ref BUILTINS_IDX_TO_SYM: &'static [Symbol] = {
@@ -182,7 +210,7 @@ pub fn reserved_symbols(input: TokenStream) -> TokenStream {
 
             static ref BUILTINS_SYM_TO_IDX: &'static std::collections::HashMap<Symbol, SymbolIndex> = {
                 let mut map = std::collections::HashMap::new();
-                #(map.insert(Symbol::#symbol_list, Symbol::#symbol_id_list);)*
+                #(map.insert(Symbol::#symbol_list, SymbolIndex::#symbol_list);)*
                 Box::leak(Box::new(map))
             };
         }

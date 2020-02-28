@@ -10,7 +10,7 @@ use crate::{
         IrQuery, IrRef, IrRelation, IrTermGraph,
     },
     parse::{self, QuasiArg, QuasiVar, QuasiquoteInput},
-    Ident, Name, Symbol, SymbolTable, Var,
+    Ident, Name, SymbolIndex, SymbolTable, Var,
 };
 
 impl ToTokens for Ident {
@@ -21,33 +21,43 @@ impl ToTokens for Ident {
     }
 }
 
-impl ToTokens for Symbol {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        assert!(
-            self.get_scope().is_reserved(),
-            "tried to emit non-builtin scope `{}`",
-            self
-        );
+impl SymbolIndex {
+    fn to_syntax(&self, ir: &IrTermGraph, ctx: &SyntaxCtx) -> TokenStream {
+        if self.is_reserved() {
+            match *self {
+                SymbolIndex::PUBLIC => quote!(SymbolIndex::PUBLIC),
+                SymbolIndex::INTERNAL => quote!(SymbolIndex::INTERNAL),
+                SymbolIndex::LOCAL => {
+                    let root_ident = &ctx.root_ident;
+                    quote!(#root_ident)
+                }
+                SymbolIndex::MOD => quote!(SymbolIndex::MOD),
+                _ => unreachable!(),
+            }
+        } else {
+            let terms_ident = &ctx.terms_ident;
+            let sym_ref = ir.symbols().read();
+            let sym = &sym_ref[*self];
+            let ident = sym.ident();
+            let parent = sym.parent().to_syntax(ir, ctx);
 
-        let ident = self.ident();
-        let scope_id = self.get_scope().get_id();
-        quote!(Scope::from_id(#scope_id).symbol(#ident)).to_tokens(tokens);
+            if self.is_builtin() {
+                quote!(#terms_ident.symbols().read().get(&Symbol::new(#ident, #parent)).unwrap())
+            } else {
+                quote!(#terms_ident.symbols().write().insert_with_parent(#ident, #parent))
+            }
+        }
     }
 }
 
-impl ToTokens for Name {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let root = &self.root;
-        let segments = self.path.iter();
-
-        let quoted = quote! {
-            Name {
-                root: #root,
-                path: vector![#(#segments),*],
-            }
-        };
-
-        quoted.to_tokens(tokens);
+impl Name {
+    fn to_syntax(&self, ir: &IrTermGraph, ctx: &SyntaxCtx) -> TokenStream {
+        let root = self.root.to_syntax(ir, ctx);
+        let path = self.path.iter();
+        quote!(Name {
+            root: #root,
+            path: vector![#(#path),*],
+        })
     }
 }
 
@@ -71,7 +81,6 @@ struct SyntaxCtx {
     terms_ident: SynIdent,
     modules_ident: SynIdent,
     module_ident: SynIdent,
-    scope_ident: SynIdent,
     root_ident: SynIdent,
     mode: Mode,
 }
@@ -82,7 +91,6 @@ impl SyntaxCtx {
             terms_ident: SynIdent::new("__ir_terms", Span::call_site()),
             modules_ident: SynIdent::new("__ir_modules", Span::call_site()),
             module_ident: SynIdent::new("__ir_module", Span::call_site()),
-            scope_ident: SynIdent::new("__ir_scope", Span::call_site()),
             root_ident: SynIdent::new("__ir_root", Span::call_site()),
             mode,
         }
@@ -107,21 +115,10 @@ impl IrNode {
     fn to_syntax(&self, ir: &IrTermGraph, ctx: &SyntaxCtx) -> TokenStream {
         use IrNode::*;
 
-        let SyntaxCtx { root_ident, .. } = ctx;
-
         match self {
             Const(name) => {
-                let segments = name.path.iter();
-                match name.root {
-                    Symbol::LOCAL => quote!(
-                        IrNode::Const(Name {
-                            root: #root_ident.clone(),
-                            path: vector![#(#segments),*],
-                        })
-                    ),
-                    ref s if s.get_scope().is_reserved() => quote!(IrNode::Const(#name)),
-                    ref s => panic!("root {} shouldn't be here.", s),
-                }
+                let name_syn = name.to_syntax(ir, ctx);
+                quote!(IrNode::Const(#name_syn))
             }
             Var(var) => quote!(IrNode::Var(#var)),
             Int32(i) => quote!(IrNode::Int32(#i)),
@@ -129,10 +126,7 @@ impl IrNode {
             Float32(f) => quote!(IrNode::Float32(#f)),
             Ref(r) => {
                 let r_syn = r.to_syntax(ir, ctx);
-                quote!({
-                    let ir_ref = (#r_syn);
-                    IrNode::Ref(ir_ref)
-                })
+                quote!(IrNode::Ref(#r_syn))
             }
             Blob(_) => todo!(),
             Raw(raw) => quote!(IrNode::Raw(#raw)),
@@ -223,15 +217,13 @@ impl IrModule {
     fn to_syntax(&self, terms: &IrTermGraph, ctx: &SyntaxCtx) -> TokenStream {
         let modules_ident = &ctx.modules_ident;
         let module_ident = &ctx.module_ident;
-        let scope_ident = &ctx.scope_ident;
         let root_ident = &ctx.root_ident;
 
         let entries = self.entries.iter().map(|r| r.to_syntax(terms, ctx));
 
         quote! {
             {
-                let #scope_ident = #modules_ident[#module_ident].get_scope();
-                let #root_ident = #modules_ident[#module_ident].get_root();
+                let #root_ident = #modules_ident[#module_ident].root();
                 let entries = vector![#(#entries),*];
                 #modules_ident[#module_ident].entries = entries;
                 #module_ident
@@ -251,18 +243,22 @@ impl IrKnowledgeBase {
 
             // TODO: do we need a writer lock here? Will a reader lock + try_normalize_full
             // + unwrap work?
-            let module_name = terms.symbols().write().normalize_full(m.get_root().clone());
+            let module_name = terms.symbols().write().lookup_name(m.root());
 
             assert!(
-                module_name.root.get_scope().is_reserved(),
+                terms.symbols().read()[module_name.root]
+                    .parent()
+                    .is_reserved(),
                 "module name `{}` is not fully normalized (from `{}`)",
-                module_name,
-                m.get_root(),
+                terms.symbols().read().display_name(&module_name),
+                terms.symbols().read().display(m.root()),
             );
 
+            let module_name_syn = module_name.to_syntax(terms, ctx);
+
             quote! {{
-                let root_sym = #terms_ident.symbols().write().normalize(#module_name);
-                let #module_ident = #modules_ident.new_named_module_with_root(root_sym);
+                let root_sym = #terms_ident.symbols().write().insert_name(#module_name_syn);
+                let #module_ident = #modules_ident.module(root_sym);
                 let _ = #module_toks;
             }}
         });
@@ -289,7 +285,6 @@ fn prelude_and_wrapper(
     let terms_ident = &ctx.terms_ident;
     let modules_ident = &ctx.modules_ident;
     let module_ident = &ctx.module_ident;
-    let scope_ident = &ctx.scope_ident;
     let root_ident = &ctx.root_ident;
 
     let imports = quote! {
@@ -299,7 +294,7 @@ fn prelude_and_wrapper(
                 IrRelation, IrCompound, IrCompoundKind, IrGoal,
                 IrModuleEntry, IrKnowledgeBase,
             },
-            Ident, Symbol, Scope, Name, Var,
+            Ident, Symbol, SymbolIndex, Name, Var,
             vector, hashset,
         };
     };
@@ -319,19 +314,9 @@ fn prelude_and_wrapper(
         },
     };
 
-    let body_insert = match ctx.mode {
-        Mode::KnowledgeBase => TokenStream::new(),
-        // Module syntax generator will generate #scope_ident and #root_ident
-        Mode::Module => TokenStream::new(),
-        Mode::Term => quote! {
-            let #scope_ident = #root_ident.get_scope();
-        },
-    };
-
     quote! {
         fn #fn_ident(#args_insert #(#args),*) -> #output_ty {
             #imports
-            #body_insert
             #output
         }
     }
@@ -365,7 +350,7 @@ pub fn knowledge_base(input: TokenStream) -> Result<TokenStream> {
 pub fn module(input: TokenStream) -> Result<TokenStream> {
     let symbols = SymbolTable::new();
     let mut modules = IrKnowledgeBase::new(symbols.clone());
-    let module = modules.new_anonymous_module();
+    let module = modules.module(symbols.write().insert(Ident::gensym()));
     parse::use_graphs(modules, IrTermGraph::new(symbols.clone()));
     parse::set_module(module);
 

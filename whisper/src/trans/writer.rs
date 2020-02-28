@@ -120,6 +120,12 @@ impl<'heap> TermWriter for HeapWriter<'heap> {
         self.heap.to_mut().words.push(placement);
     }
 
+    fn push_box(&mut self) -> Word {
+        Word::var(self.heap.words.len())
+    }
+
+    fn pop_box(&mut self) {}
+
     fn push_compound(&mut self, kind: CompoundKind) -> Word {
         let heap_mut = self.heap.to_mut();
         let addr = heap_mut.words.len();

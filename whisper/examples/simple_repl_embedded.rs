@@ -47,7 +47,7 @@ fn main() -> Result<(), Error> {
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
         let ir_query = terms
-            .parse_query_str_with_root(modules[module].get_root().clone(), &line?)
+            .parse_query_str_with_root(modules[module].root().clone(), &line?)
             .unwrap();
 
         let query = SharedQuery::Owned(whisper::trans::query(

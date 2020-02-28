@@ -1,6 +1,7 @@
 use ::std::{
     collections::{HashMap, VecDeque},
     hash::Hash,
+    mem,
 };
 
 use crate::{
@@ -52,6 +53,9 @@ pub trait TermWriter: Sized {
     fn write_forward(&mut self) -> Self::Hole;
     fn write_ref(&mut self, placement: &Self::Placement);
 
+    fn push_box(&mut self) -> Self::Placement;
+    fn pop_box(&mut self);
+
     fn push_compound(&mut self, kind: CompoundKind) -> Self::Placement;
     fn pop_compound(&mut self);
 
@@ -95,6 +99,14 @@ impl<'a, T: TermWriter> TermWriter for &'a mut T {
 
     fn write_ref(&mut self, placement: &Self::Placement) {
         (*self).write_ref(placement)
+    }
+
+    fn push_box(&mut self) -> Self::Placement {
+        (*self).push_box()
+    }
+
+    fn pop_box(&mut self) {
+        (*self).pop_box()
     }
 
     fn push_compound(&mut self, kind: CompoundKind) -> Self::Placement {
@@ -224,6 +236,14 @@ impl<B: TermWriter, T: TermGraph> TermEmitter<B, T> {
         id
     }
 
+    pub fn begin_box(&mut self) -> B::Placement {
+        self.builder.push_box()
+    }
+
+    pub fn end_box(&mut self) {
+        self.builder.pop_box();
+    }
+
     pub fn begin_compound(&mut self, kind: CompoundKind) -> B::Placement {
         self.builder.push_compound(kind)
     }
@@ -263,5 +283,9 @@ impl<B: TermWriter, T: TermGraph> TermEmitter<B, T> {
 
     pub fn get_var_scope(&self, var_scope: VarScopeId) -> &B::VarScope {
         &self.scopes[var_scope.0]
+    }
+
+    pub fn take_var_scope(&mut self, var_scope: VarScopeId) -> B::VarScope {
+        mem::take(&mut self.scopes[var_scope.0])
     }
 }

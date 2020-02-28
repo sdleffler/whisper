@@ -109,13 +109,13 @@ pub struct Module {
     inner: Arc<ModuleInner>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ModuleInner {
     heap: Heap,
     const_sets: HashMap<(usize, Word), RoaringBitmap>,
     var_sets: Vec<RoaringBitmap>,
     relations: Vec<Relation>,
-    name: Symbol,
+    name: SymbolIndex,
 }
 
 impl Index<RelationId> for Module {
@@ -147,11 +147,11 @@ impl Module {
         &self.inner.heap.symbols
     }
 
-    pub fn name(&self) -> &Symbol {
-        &self.inner.name
+    pub fn name(&self) -> SymbolIndex {
+        self.inner.name
     }
 
-    pub fn from_mapped_heap(name: Symbol, heap: Heap, relations: Vec<Relation>) -> Self {
+    pub fn from_mapped_heap(name: SymbolIndex, heap: Heap, relations: Vec<Relation>) -> Self {
         // println!("Building knowledge base from heap...");
 
         let mut const_sets = HashMap::new();
@@ -288,19 +288,18 @@ impl KnowledgeBase {
         self.modules.get(&idx)
     }
 
-    pub fn get_root(&self) -> &Module {
+    pub fn root(&self) -> &Module {
         self.get(Symbol::MOD_INDEX).unwrap()
     }
 
     pub fn insert(&mut self, module: impl Into<Module>) {
         let module = module.into();
         assert_eq!(&self.symbols, module.symbols());
-        let index = self.symbols.write().resolve(module.name());
-        self.modules.insert(index, module);
+        self.modules.insert(module.name(), module);
     }
 
-    pub fn remove(&mut self, name: &Symbol) {
-        self.modules.remove(&self.symbols.write().resolve(name));
+    pub fn remove(&mut self, name: SymbolIndex) {
+        self.modules.remove(&name);
     }
 
     pub fn import(&mut self, root: &Symbol, module: &PortableModule) {
@@ -373,7 +372,7 @@ impl PortableModule {
         }
     }
 
-    pub fn into_module_with_root(&self, symbols: SymbolTable, root: &Symbol) -> Module {
+    pub fn into_module_with_root(&self, symbols: SymbolTable, root: SymbolIndex) -> Module {
         let const_sets = self
             .const_sets
             .iter()
@@ -382,8 +381,7 @@ impl PortableModule {
                 if word.get_tag() == Tag::Const {
                     let name = self.heap.symbols[&word.get_value()]
                         .into_name_with_root_module(&symbols, root);
-                    let sym_index = symbols.write().resolve(name);
-                    word = Word::r#const(sym_index);
+                    word = Word::r#const(root);
                 }
 
                 (

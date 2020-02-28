@@ -1,9 +1,9 @@
-use ::std::{borrow::Borrow, mem, ops::Deref, rc::Rc};
+use ::std::{borrow::Borrow, mem, ops::Deref, sync::Arc};
 
 #[derive(Debug)]
 pub enum MaybeShared<'a, T> {
     Owned(T),
-    Shared(Rc<T>),
+    Shared(Arc<T>),
 
     Borrowed(&'a T),
     BorrowedMut(&'a mut T),
@@ -68,7 +68,7 @@ impl<'a, T: Clone> MaybeShared<'a, T> {
     pub fn into_owned(self) -> T {
         match self {
             Owned(owned) => owned,
-            Shared(shared) => Rc::try_unwrap(shared).unwrap_or_else(|rc| (*rc).clone()),
+            Shared(shared) => Arc::try_unwrap(shared).unwrap_or_else(|rc| (*rc).clone()),
             Borrowed(borrowed) => (*borrowed).clone(),
             BorrowedMut(borrowed) => (*borrowed).clone(),
             Empty => unreachable!(),
@@ -77,10 +77,10 @@ impl<'a, T: Clone> MaybeShared<'a, T> {
 
     pub fn to_shared<'b: 'a>(&mut self) -> MaybeShared<'b, T> {
         let shared = match mem::replace(self, Empty) {
-            Owned(owned) => Shared(Rc::new(owned.clone())),
+            Owned(owned) => Shared(Arc::new(owned.clone())),
             Shared(shared) => Shared(shared),
-            Borrowed(borrowed) => Shared(Rc::new((*borrowed).clone())),
-            BorrowedMut(borrowed) => Shared(Rc::new((*borrowed).clone())),
+            Borrowed(borrowed) => Shared(Arc::new((*borrowed).clone())),
+            BorrowedMut(borrowed) => Shared(Arc::new((*borrowed).clone())),
             Empty => unreachable!(),
         };
         *self = shared.clone();
@@ -106,7 +106,7 @@ impl<'a, T: Clone> MaybeShared<'a, T> {
             Shared(_) | Borrowed(_) => {
                 let this = mem::replace(self, Empty);
                 let owned = match this {
-                    Shared(shared) => Rc::try_unwrap(shared).unwrap_or_else(|rc| (*rc).clone()),
+                    Shared(shared) => Arc::try_unwrap(shared).unwrap_or_else(|rc| (*rc).clone()),
                     Borrowed(borrowed) => borrowed.clone(),
                     _ => unreachable!(),
                 };

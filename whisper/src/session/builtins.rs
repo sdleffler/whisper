@@ -1,6 +1,8 @@
 use crate::{
     heap::Heap,
-    session::{ExternHandler, Frame, GoalRef, ModuleCache, Trail, Unfolded, UnificationStack},
+    session::{
+        ExternHandler, Frame, GoalRef, ModuleCache, Resolver, Trail, Unfolded, UnificationStack,
+    },
     word::{Address, Tag},
     Symbol, SymbolIndex,
 };
@@ -15,12 +17,11 @@ macro_rules! unpack {
     };
 }
 
-pub struct BuiltinContext<'sesh, H: ExternHandler> {
+pub struct BuiltinContext<'sesh, H: ExternHandler, R: Resolver> {
     pub heap: &'sesh mut Heap,
-    pub extern_handler: &'sesh H,
-    pub extern_context: &'sesh H::Context,
+    pub extern_handler: &'sesh mut H,
     pub extern_state: &'sesh mut H::State,
-    pub modules: &'sesh mut ModuleCache,
+    pub modules: &'sesh mut ModuleCache<R>,
     pub unifier: &'sesh mut UnificationStack,
     pub frame: &'sesh mut Frame<H::State>,
     pub trail: &'sesh mut Trail,
@@ -29,10 +30,14 @@ pub struct BuiltinContext<'sesh, H: ExternHandler> {
 
 /// The `is` builtin unifies two terms. That's it. Nice and simple.
 #[inline]
-pub fn builtin_is<'sesh, H: ExternHandler>(
-    ctx: &'sesh mut BuiltinContext<'sesh, H>,
+pub fn builtin_is<'sesh, H, R>(
+    ctx: &'sesh mut BuiltinContext<'sesh, H, R>,
     addr: Address,
-) -> Unfolded {
+) -> Unfolded
+where
+    H: ExternHandler,
+    R: Resolver,
+{
     ctx.unifier.init(ctx.heap[addr + 2], ctx.heap[addr + 3]);
 
     // println!(
@@ -43,7 +48,6 @@ pub fn builtin_is<'sesh, H: ExternHandler>(
 
     if !ctx.unifier.unify(
         ctx.extern_handler,
-        ctx.extern_context,
         ctx.extern_state,
         ctx.heap,
         ctx.trail,
@@ -56,22 +60,27 @@ pub fn builtin_is<'sesh, H: ExternHandler>(
 }
 
 #[inline]
-pub fn builtin_cut<'sesh, H: ExternHandler>(ctx: &'sesh mut BuiltinContext<'sesh, H>) -> Unfolded {
+pub fn builtin_cut<'sesh, H, R>(ctx: &'sesh mut BuiltinContext<'sesh, H, R>) -> Unfolded
+where
+    H: ExternHandler,
+    R: Resolver,
+{
     ctx.frame.cut();
     Unfolded::Succeed(ctx.trail[ctx.goal].next)
 }
 
 #[inline]
-pub fn builtin_try_in<'sesh, H: ExternHandler>(
-    ctx: &'sesh mut BuiltinContext<'sesh, H>,
+pub fn builtin_try_in<'sesh, H, R>(
+    ctx: &'sesh mut BuiltinContext<'sesh, H, R>,
     addr: Address,
-) -> Unfolded {
+) -> Unfolded
+where
+    H: ExternHandler,
+    R: Resolver,
+{
     let prev_next_goal = ctx.trail[ctx.goal].next;
     let next_goal = ctx.heap[addr + 2];
-
-    let name_index =
-        SymbolIndex(ctx.heap[addr + 3].debug_assert_tag(Tag::Const).get_value() as usize);
-    let next_module = ctx.modules.get_or_insert(name_index);
+    let next_module = ctx.modules.get_or_insert(ctx.heap[addr + 3], ctx.heap);
 
     // println!(
     //     "`{}` in module with name `{}`",
@@ -82,7 +91,11 @@ pub fn builtin_try_in<'sesh, H: ExternHandler>(
     Unfolded::Succeed(Some(ctx.trail.cons(prev_next_goal, next_goal, next_module)))
 }
 
-pub fn handle_goal<'sesh, H: ExternHandler>(ctx: &'sesh mut BuiltinContext<'sesh, H>) -> Unfolded {
+pub fn handle_goal<'sesh, H, R>(ctx: &'sesh mut BuiltinContext<'sesh, H, R>) -> Unfolded
+where
+    H: ExternHandler,
+    R: Resolver,
+{
     let goal_addr = ctx.trail[ctx.goal]
         .address
         .debug_assert_tag(Tag::OpaqueRef)

@@ -1,4 +1,4 @@
-whisper::knowledge_base! {
+whisper_derive::knowledge_base! {
     fn foo();
 
     mod snafu {

@@ -94,7 +94,7 @@
 
 use crate::{
     parse::{self, ParseError},
-    Scope, Symbol,
+    SymbolIndex,
 };
 
 use ::{
@@ -114,12 +114,10 @@ pub mod writer;
 pub use module::*;
 pub use term::*;
 
-use fold::Fold;
-
 #[derive(Debug, Fail, From)]
 pub enum IrError {
     #[fail(display = "could not create module `{}`", _0)]
-    ModuleCreationError(Symbol, #[fail(cause)] Box<dyn Fail>),
+    ModuleCreationError(SymbolIndex, #[fail(cause)] Box<dyn Fail>),
 
     #[from]
     #[fail(display = "error parsing module")]
@@ -188,12 +186,14 @@ impl IrTermGraph {
     }
 
     pub fn parse_query_str<S: AsRef<str>>(&mut self, string: S) -> Result<IrQuery, IrError> {
-        self.parse_query_str_with_root(Symbol::MOD, string)
+        self.parse_query_str_with_root(SymbolIndex::MOD, string)
     }
 
+    // TODO: figure out whether `root` is necessary for something and whether it's missing
+    // some check or whatever here
     pub fn parse_query_str_with_root<S: AsRef<str>>(
         &mut self,
-        root: Symbol,
+        _root: SymbolIndex,
         string: S,
     ) -> Result<IrQuery, IrError> {
         let terms_owned = mem::replace(self, IrTermGraph::new(self.symbols().clone()));
@@ -207,28 +207,6 @@ impl IrTermGraph {
         });
         let (_, terms_recovered) = parse::swap_graphs();
         *self = terms_recovered;
-        let out = out?;
-
-        struct Localize {
-            root: Symbol,
-        }
-
-        impl Fold for Localize {
-            fn fold_symbol(
-                &mut self,
-                _ir_graph: &mut IrTermGraph,
-                symbol: &Symbol,
-            ) -> Option<Symbol> {
-                if symbol == &Symbol::LOCAL {
-                    Some(self.root.clone())
-                } else if symbol.get_scope() == Scope::LOCAL {
-                    Some(self.root.get_scope().symbol(symbol.ident()))
-                } else {
-                    None
-                }
-            }
-        }
-
-        Ok(fold::fold_query(&mut Localize { root }, self, &out).unwrap_or(out))
+        Ok(out?)
     }
 }

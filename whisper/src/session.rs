@@ -1,7 +1,7 @@
 use crate::{
     heap::Heap,
     knowledge_base::{KnowledgeBase, Matches, Module},
-    query::{QueryMap, SharedQuery},
+    query::{Query, QueryMap},
     word::{Address, Tag, Word},
     Symbol, SymbolIndex, SymbolTable,
 };
@@ -9,7 +9,7 @@ use crate::{
 use ::{
     failure::Fail,
     smallvec::SmallVec,
-    std::{collections::HashMap, fmt, ops::Index},
+    std::{collections::HashMap, fmt, marker::PhantomData, mem, ops::Index},
 };
 
 mod builtins;
@@ -185,8 +185,7 @@ pub struct UnificationStack {
 /// References to the state necessary for unification to take place, excluding the `UnificationStack` itself.
 /// This is just condensing all the parameters threaded through the unification code into one place.
 pub struct UnificationContext<'sesh, H: ExternHandler> {
-    handler: &'sesh H,
-    handler_context: &'sesh H::Context,
+    handler: &'sesh mut H,
     handler_state: &'sesh mut H::State,
     trail: &'sesh mut Trail,
     heap: &'sesh mut Heap,
@@ -219,8 +218,7 @@ impl UnificationStack {
     #[inline]
     pub fn unify<H>(
         &mut self,
-        handler: &H,
-        handler_context: &H::Context,
+        handler: &mut H,
         handler_state: &mut H::State,
         heap: &mut Heap,
         trail: &mut Trail,
@@ -233,7 +231,6 @@ impl UnificationStack {
             let (l, r) = (heap.chase(l), heap.chase(r));
             let ctx = UnificationContext {
                 handler,
-                handler_context,
                 handler_state,
                 heap,
                 trail,
@@ -261,7 +258,6 @@ impl UnificationStack {
                     self.push_range(&ctx.heap, l.get_address(), r.get_address(), 3);
                 } else if l.get_tag() == Tag::ExternRef && r.get_tag() == Tag::ExternRef {
                     if !ctx.handler.handle_unify(
-                        ctx.handler_context,
                         ctx.handler_state,
                         self,
                         ctx.heap,
@@ -360,13 +356,35 @@ impl<S> Yield<S> {
     }
 }
 
+pub trait Resolver: Send + Sync {
+    fn symbols(&self) -> &SymbolTable;
+    fn resolve(&self, idx: Word, heap: &Heap) -> Option<Module>;
+    fn root(&self) -> Module;
+}
+
+impl Resolver for KnowledgeBase {
+    fn symbols(&self) -> &SymbolTable {
+        self.symbols()
+    }
+
+    fn resolve(&self, idx: Word, _heap: &Heap) -> Option<Module> {
+        self.get(SymbolIndex(
+            idx.debug_assert_tag(Tag::Const).get_value() as usize
+        ))
+        .cloned()
+    }
+
+    fn root(&self) -> Module {
+        self.root().clone()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ModuleIndex(usize);
 
 #[derive(Debug)]
 pub struct ModuleCache {
-    knowledge: KnowledgeBase,
-    module_table: HashMap<SymbolIndex, ModuleIndex>,
+    module_table: HashMap<Word, ModuleIndex>,
     modules: Vec<Module>,
 }
 
@@ -379,51 +397,54 @@ impl Index<ModuleIndex> for ModuleCache {
 }
 
 impl ModuleCache {
-    pub fn new(knowledge: KnowledgeBase) -> Self {
-        let mut this = Self {
-            knowledge,
+    pub fn new() -> Self {
+        Self {
             module_table: HashMap::new(),
             modules: Vec::new(),
-        };
-
-        this.module_table.insert(Symbol::MOD_INDEX, ModuleIndex(0));
-        this.modules.push(this.knowledge.get_root().clone());
-
-        this
+        }
     }
 
-    pub fn get_or_insert(&mut self, scope: SymbolIndex) -> ModuleIndex {
+    pub fn clear(&mut self) {
+        self.module_table.clear();
+        self.modules.clear();
+    }
+
+    fn insert(&mut self, scope: Word, module: Module) -> ModuleIndex {
+        let midx = ModuleIndex(self.modules.len());
+        self.modules.push(module);
+        self.module_table.insert(scope, midx);
+        midx
+    }
+
+    pub fn get_or_insert(
+        &mut self,
+        scope: Word,
+        heap: &Heap,
+        resolver: &impl Resolver,
+    ) -> ModuleIndex {
         match self.module_table.get(&scope).copied() {
             Some(midx) => midx,
             None => {
-                let midx = ModuleIndex(self.modules.len());
-                let module = self.knowledge.get(scope).unwrap().clone();
-
-                self.module_table.insert(scope, midx);
-                self.modules.push(module);
-
-                midx
+                let module = resolver.resolve(scope, heap).unwrap();
+                self.insert(scope, module)
             }
         }
     }
 
-    pub fn get_root(&self) -> ModuleIndex {
-        ModuleIndex(0)
+    pub fn root(&self, resolver: &impl Resolver) -> ModuleIndex {
+        let module = resolver.root();
+        let name = module.name
     }
 }
 
-pub type SimpleSession = Session<NullHandler>;
+pub type SimpleSession = Session<()>;
 
 #[derive(Debug)]
-pub struct Session<E: ExternHandler> {
+pub struct Session<T: ExternFrame> {
     heap: Heap,
-    handler: E,
-
-    symbols: SymbolTable,
-    modules: ModuleCache,
 
     unifier: UnificationStack,
-    frames: SmallVec<[Frame<E::State>; 8]>,
+    frames: SmallVec<[Frame<T>; 8]>,
     trail: Trail,
 
     query_vars: QueryMap,
@@ -431,47 +452,16 @@ pub struct Session<E: ExternHandler> {
 
 // Statically assert that `Session` is `Send + Sync`.
 #[allow(dead_code)]
-fn assert_session_send_and_sync<E: ExternHandler>() {
+fn assert_session_send_and_sync<T: ExternFrame>() {
     fn is_send_and_sync<T: Send + Sync>() {}
-    is_send_and_sync::<Session<E>>();
+    is_send_and_sync::<Session<T>>();
 }
 
-impl<H: ExternHandler + Default> Session<H>
-where
-    H::State: Default,
-{
-    /// Shortcut for constructing a new `Session` when your `Handler` and `State` types both
-    /// implement `Default` and you don't want to specify other values for them.
-    pub fn new(symbols: SymbolTable, knowledge: KnowledgeBase) -> Self {
-        Self::with_handler_and_state(symbols, knowledge, Default::default())
-    }
-}
-
-impl<H: ExternHandler> Session<H>
-where
-    H::State: Default,
-{
-    /// Shortcut for constructing a new `Session` when your extern handler's `State` type has a useful default.
-    pub fn with_handler(symbols: SymbolTable, knowledge: KnowledgeBase, handler: H) -> Self {
-        Self::with_handler_and_state(symbols, knowledge, handler)
-    }
-}
-
-impl<H: ExternHandler> Session<H> {
-    /// Construct a new session with an external term handler and provide a starting state for the handler.
-    pub fn with_handler_and_state(
-        symbols: SymbolTable,
-        knowledge: KnowledgeBase,
-        handler: H,
-    ) -> Self {
-        assert_eq!(&symbols, knowledge.symbols());
-
+impl<T: ExternFrame> Session<T> {
+    /// Construct a new session.
+    pub fn new(symbols: SymbolTable) -> Self {
         Self {
-            heap: Heap::new(symbols.clone()),
-            handler,
-
-            symbols,
-            modules: ModuleCache::new(knowledge),
+            heap: Heap::new(symbols),
 
             unifier: UnificationStack::new(),
             frames: SmallVec::new(),
@@ -481,24 +471,50 @@ impl<H: ExternHandler> Session<H> {
         }
     }
 
-    pub fn load(&mut self, query: SharedQuery)
-    where
-        H::State: Default,
-    {
-        self.load_with_extern_state(query, Default::default());
+    pub fn symbols(&self) -> &SymbolTable {
+        &self.heap.symbols
     }
 
-    pub fn load_with_extern_state(&mut self, query: SharedQuery, extern_state: H::State) {
-        assert_eq!(&self.symbols, query.symbols());
+    pub fn load<R>(&mut self, query: Query, modules: &ModuleCache<R>)
+    where
+        T: Default,
+        R: Resolver,
+    {
+        self.load_with_extern_state(query, modules, Default::default());
+    }
 
-        let query = query.into_owned();
+    pub fn load_with_extern_state<R>(
+        &mut self,
+        mut query: Query,
+        modules: &ModuleCache<R>,
+        extern_state: T,
+    ) where
+        R: Resolver,
+    {
+        self.load_with_extern_state_and_reuse_query(&mut query, modules, extern_state);
+    }
+
+    /// This function leaves the `query` passed by mut holding *garbage.* It will swap
+    /// the two heaps, allowing the previous query's `Heap` and `QueryMap` to be reused.
+    /// *After calling this function, the `query` will not be the same `Query`. This
+    /// function should only be used if you know what you are doing and are going for
+    /// performance.*
+    pub fn load_with_extern_state_and_reuse_query<R>(
+        &mut self,
+        query: &mut Query,
+        modules: &ModuleCache<R>,
+        extern_state: T,
+    ) where
+        R: Resolver,
+    {
+        assert_eq!(self.symbols(), query.symbols());
 
         self.trail.clear();
         self.frames.clear();
         self.unifier.clear();
 
         if !query.goals.is_empty() {
-            let module_idx = self.modules.get_root();
+            let module_idx = modules.root();
             let first_goal = query.goals.first().copied().unwrap();
 
             self.frames.push(Frame {
@@ -513,15 +529,15 @@ impl<H: ExternHandler> Session<H> {
                         .map(|goal_addr| (goal_addr, module_idx)),
                 ),
                 matches: match first_goal.get_tag() {
-                    Tag::StructRef => self.modules[module_idx].search(&query.heap, first_goal),
+                    Tag::StructRef => modules[module_idx].search(&query.heap, first_goal),
                     _ => Matches::empty(),
                 },
                 extern_state,
             });
         }
 
-        self.heap = query.heap.into_owned();
-        self.query_vars = query.vars;
+        mem::swap(&mut self.heap, &mut query.heap);
+        mem::swap(&mut self.query_vars, &mut query.vars);
     }
 
     pub fn heap(&self) -> &Heap {
@@ -534,7 +550,14 @@ impl<H: ExternHandler> Session<H> {
 
     // TODO: Separate this function into smaller ones for clarity. I would do this now but I've had
     // so much goddamn espresso my left eye won't stop twitching.
-    pub fn resume_with_context(&mut self, context: &H::Context) -> Yield<H::State> {
+    pub fn resume_with_context<H>(
+        &mut self,
+        modules: &mut ModuleCache<H::Resolver>,
+        handler: &mut H,
+    ) -> Yield<T>
+    where
+        H: ExternHandler<State = T>,
+    {
         // We proceed by a depth-first search over the proof space. Well, in fancy-speak.
         'searching: while let Some(frame) = self.frames.last_mut() {
             //println!("'searching");
@@ -553,7 +576,7 @@ impl<H: ExternHandler> Session<H> {
                 //println!("goal: {}", self.heap.display_word(goal_ref));
 
                 'backtrack: loop {
-                    let goal_module = &self.modules[goal_module_idx];
+                    let goal_module = &modules[goal_module_idx];
 
                     let (mut remaining_goals, mut extern_state) = match goal_ref.get_tag() {
                         Tag::StructRef => {
@@ -576,8 +599,7 @@ impl<H: ExternHandler> Session<H> {
                                 let mut extern_state = frame.extern_state.clone();
 
                                 if !self.unifier.unify(
-                                    &self.handler,
-                                    context,
+                                    handler,
                                     &mut extern_state,
                                     &mut self.heap,
                                     &mut self.trail,
@@ -630,23 +652,22 @@ impl<H: ExternHandler> Session<H> {
                             let unfolded = match goal_ref.get_tag() {
                                 Tag::StructRef => {
                                     let matches =
-                                        self.modules[goal_module_idx].search(&self.heap, goal_ref);
+                                        modules[goal_module_idx].search(&self.heap, goal_ref);
                                     break 'finding_next_non_extern_goal matches;
                                 }
-                                Tag::ExternRef => self.handler.handle_goal(GoalContext {
-                                    context,
+                                Tag::ExternRef => handler.handle_goal(GoalContext {
                                     state: &mut extern_state,
                                     frame,
+                                    modules,
                                     heap: &mut self.heap,
                                     trail: &mut self.trail,
                                     unifier: &mut self.unifier,
                                     goal,
                                 }),
                                 Tag::OpaqueRef => builtins::handle_goal(&mut BuiltinContext {
-                                    extern_handler: &self.handler,
-                                    extern_context: context,
+                                    extern_handler: handler,
                                     extern_state: &mut extern_state,
-                                    modules: &mut self.modules,
+                                    modules,
                                     frame,
                                     heap: &mut self.heap,
                                     trail: &mut self.trail,
@@ -726,13 +747,13 @@ impl<H: ExternHandler> Session<H> {
     }
 }
 
-impl<H: ExternHandler<Context = (), State = ()>> Session<H> {
-    /// This function is a convenient shorthand for when you have a super simple (or noop) extern
-    /// term handler. It's like `resume_with_context` but fills in the `()` context for you and
-    /// automatically collapses `Yield` to a boolean since the state is `()` as well and carries
-    /// no information.
-    pub fn resume(&mut self) -> bool {
-        self.resume_with_context(&()).is_solution()
+impl Session<()> {
+    pub fn resume<R>(&mut self, modules: &mut ModuleCache<R>) -> bool
+    where
+        R: Resolver,
+    {
+        self.resume_with_context(modules, &mut NullHandler::default())
+            .is_solution()
     }
 }
 
@@ -742,27 +763,47 @@ pub enum Unfolded {
     Fail,
 }
 
-pub struct GoalContext<'sesh, C: ?Sized, S> {
-    pub context: &'sesh C,
-    pub state: &'sesh mut S,
-    pub frame: &'sesh mut Frame<S>,
+pub struct GoalContext<'sesh, T: ExternFrame, R: Resolver> {
+    pub state: &'sesh mut T,
+    pub frame: &'sesh mut Frame<T>,
+    pub modules: &'sesh mut ModuleCache<R>,
     pub heap: &'sesh mut Heap,
     pub unifier: &'sesh mut UnificationStack,
     pub trail: &'sesh mut Trail,
     pub goal: GoalRef,
 }
 
-/// Describes the main hooks which can be registered to interact with `Extern` terms.
-pub trait ExternHandler: Sized + Send + Sync {
-    /// The `Context` type allows handlers to have per-resumption state they can inspect.
-    type Context: ?Sized;
+impl<'sesh, T: ExternFrame, R: Resolver> GoalContext<'sesh, T, R> {
+    pub fn as_unification_context_with_handler<'ctx, H: ExternHandler<State = T>>(
+        &'ctx mut self,
+        handler: &'ctx mut H,
+    ) -> (&'ctx mut UnificationStack, UnificationContext<'ctx, H>) {
+        let uni_ctx = UnificationContext {
+            handler,
+            handler_state: &mut *self.state,
+            trail: &mut *self.trail,
+            base: self.heap.len(),
+            heap: &mut *self.heap,
+        };
+        let unifier = &mut *self.unifier;
 
+        (unifier, uni_ctx)
+    }
+}
+
+pub trait ExternFrame: Send + Sync + Clone + 'static {}
+impl<T: Send + Sync + Clone + 'static> ExternFrame for T {}
+
+/// Describes the main hooks which can be registered to interact with `Extern` terms.
+pub trait ExternHandler: Sized {
     /// The `State` type allows handlers to keep state which can be unwound for backtracking.
     /// Whenever your handler is doing mutable-state-things, it should be done through this.
     ///
     /// The actual `State` value is kept in the `Frame` type. It should be cheap to clone,
     /// since it will be cloned by `Session::resume_with_context`.
-    type State: Send + Sync + Clone;
+    type State: ExternFrame;
+
+    type Resolver: Resolver;
 
     /// Called when an `Extern` goal needs to be proved. This function allows an `Extern`
     /// goal to either fail or succeed and return a new goal list. A no-op implementation
@@ -783,7 +824,7 @@ pub trait ExternHandler: Sized + Send + Sync {
     /// }
     /// # }
     /// ```
-    fn handle_goal(&self, _goal_context: GoalContext<Self::Context, Self::State>) -> Unfolded {
+    fn handle_goal(&mut self, _goal_context: GoalContext<Self::State, Self::Resolver>) -> Unfolded {
         Unfolded::Fail
     }
 
@@ -821,8 +862,7 @@ pub trait ExternHandler: Sized + Send + Sync {
     /// # }
     /// ```
     fn handle_unify(
-        &self,
-        _ctx: &Self::Context,
+        &mut self,
         _state: &mut Self::State,
         unifier: &mut UnificationStack,
         heap: &mut Heap,
@@ -841,17 +881,16 @@ pub trait ExternHandler: Sized + Send + Sync {
     }
 }
 
-impl<'a, E: ExternHandler> ExternHandler for &'a E {
-    type Context = E::Context;
+impl<'a, E: ExternHandler> ExternHandler for &'a mut E {
     type State = E::State;
+    type Resolver = E::Resolver;
 
-    fn handle_goal(&self, goal_context: GoalContext<E::Context, E::State>) -> Unfolded {
+    fn handle_goal(&mut self, goal_context: GoalContext<Self::State, Self::Resolver>) -> Unfolded {
         (*self).handle_goal(goal_context)
     }
 
     fn handle_unify(
-        &self,
-        ctx: &E::Context,
+        &mut self,
         state: &mut E::State,
         unifier: &mut UnificationStack,
         heap: &mut Heap,
@@ -859,26 +898,37 @@ impl<'a, E: ExternHandler> ExternHandler for &'a E {
         l: Address,
         r: Address,
     ) -> bool {
-        (*self).handle_unify(ctx, state, unifier, heap, trail, l, r)
+        (*self).handle_unify(state, unifier, heap, trail, l, r)
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NullHandler;
+pub struct NullHandler<R: Resolver>(PhantomData<R>);
 
-impl ExternHandler for NullHandler {
-    type Context = ();
+impl<R: Resolver> fmt::Debug for NullHandler<R> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("NullHandler").finish()
+    }
+}
+
+impl<R: Resolver> Default for NullHandler<R> {
+    fn default() -> Self {
+        NullHandler(PhantomData)
+    }
+}
+
+impl<R: Resolver> ExternHandler for NullHandler<R> {
     type State = ();
+    type Resolver = R;
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-pub struct DebugHandler;
+pub struct DebugHandler<R: Resolver>(PhantomData<R>);
 
-impl ExternHandler for DebugHandler {
-    type Context = ();
+impl<R: Resolver> ExternHandler for DebugHandler<R> {
     type State = ();
+    type Resolver = R;
 
-    fn handle_goal(&self, goal_context: GoalContext<(), ()>) -> Unfolded {
+    fn handle_goal(&mut self, goal_context: GoalContext<(), R>) -> Unfolded {
         let GoalContext {
             heap, trail, goal, ..
         } = goal_context;
@@ -889,8 +939,7 @@ impl ExternHandler for DebugHandler {
     }
 
     fn handle_unify(
-        &self,
-        _ctx: &(),
+        &mut self,
         _state: &mut (),
         unifier: &mut UnificationStack,
         heap: &mut Heap,

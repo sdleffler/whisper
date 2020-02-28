@@ -1,5 +1,5 @@
 use super::*;
-use crate::{Scope, SymbolTable};
+use crate::{SymbolIndex, SymbolTable};
 use ::{egress::Artifact, std::mem, syn::parse::Parse};
 
 struct TestContext<'art> {
@@ -47,7 +47,7 @@ impl<'art> TestContext<'art> {
             .parse_module_str(&mut self.modules, module, s)
             .map_err(|err| syn::Error::new(proc_macro2::Span::call_site(), err))?;
 
-        let key = self.modules[module].get_root().to_string();
+        let key = self.modules[module].root().to_string();
         self.artifact
             .insert_json(&key, module.to_json(&self.terms, &self.modules));
 
@@ -59,9 +59,7 @@ impl<'art> TestContext<'art> {
             .terms
             .parse_knowledge_base_str(s)
             .map_err(|err| syn::Error::new(proc_macro2::Span::call_site(), err))?;
-
         self.artifact.insert_json(&key, kb.to_json(&self.terms));
-
         Ok(kb)
     }
 }
@@ -100,9 +98,12 @@ fn nested_modules_as_module() -> Result<()> {
     let artifact = egress.artifact("nested_modules_as_module");
     let mut ctx = TestContext::new(artifact);
 
-    let module = ctx
+    let name = ctx
         .modules
-        .new_named_module_with_root(Scope::MOD.symbol("tests/nested_modules.wh (as modules)"));
+        .symbols()
+        .write()
+        .insert_with_parent("tests/nested_modules.wh (as modules)", SymbolIndex::MOD);
+    let module = ctx.modules.module(name);
     ctx.parse_mod_artifact(module, include_str!("tests/nested_modules.wh"))?;
 
     egress.close_and_assert_unregressed().unwrap();

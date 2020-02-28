@@ -63,7 +63,7 @@ use {
     whisper_ir::{
         graph::Blob,
         trans::{writer::VarScopeId, CompoundKind, TermEmitter, TermGraph, TermWriter},
-        Ident, Scope, Symbol,
+        Ident, Scope, Symbol, Var,
     },
 };
 
@@ -71,6 +71,7 @@ pub mod serde;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SchemaCompound<'arena> {
+    Boxed(&'arena SchemaNode<'arena>),
     Seq(&'arena SchemaNode<'arena>, &'arena [SchemaNode<'arena>]),
     Tuple(&'arena [SchemaNode<'arena>]),
     TupleVariant(&'static str, &'arena [SchemaNode<'arena>]),
@@ -85,6 +86,7 @@ pub enum SchemaCompound<'arena> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SchemaNode<'arena> {
+    Var(Var),
     Const(Ident),
     Int32(i32),
     UInt32(u32),
@@ -107,6 +109,7 @@ impl<'arena> SchemaNode<'arena> {
         B: TermWriter,
     {
         match self {
+            SchemaNode::Var(v) => emitter.emit_var(var_scope, v.clone()),
             SchemaNode::Const(s) => emitter.emit_const(Scope::PUBLIC.symbol(s.clone()).into()),
             SchemaNode::Int32(i) => emitter.emit_i32(*i),
             SchemaNode::UInt32(u) => emitter.emit_u32(*u),
@@ -150,6 +153,12 @@ impl<'arena> TermGraph for SchemaGraph<'arena> {
         B: TermWriter,
     {
         match id {
+            SchemaCompound::Boxed(node) => {
+                let placement = emitter.begin_box();
+                node.visit(emitter, var_scope);
+                emitter.end_box();
+                placement
+            }
             SchemaCompound::Seq(h, t) => {
                 let placement = emitter.begin_compound(CompoundKind::Cons);
                 h.visit(emitter, var_scope);

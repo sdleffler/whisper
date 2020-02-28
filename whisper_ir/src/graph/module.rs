@@ -1,18 +1,16 @@
 use crate::{
     graph::{
-        fold::{self, Fold},
         term::{IrGoal, IrRef, IrTermGraph},
         IrError,
     },
     parse::{self, ParseError, QuasiVar},
     symbol::Path,
-    Ident, Name, Scope, Symbol, SymbolTable, SymbolTableInner,
+    Name, Symbol, SymbolIndex, SymbolTable,
 };
 
 use ::{
     im::{HashMap, HashSet, Vector},
     std::{
-        collections::BTreeSet,
         mem,
         ops::{Index, IndexMut},
     },
@@ -54,27 +52,19 @@ pub struct IrModule {
     pub exports: HashSet<Name>,
     pub imports: IrImports,
 
-    root: Symbol,
+    root: SymbolIndex,
 }
 
 impl IrModule {
-    pub fn symbol(&self, ident: impl Into<Ident>) -> Symbol {
-        self.root.get_scope().symbol(ident)
-    }
-
     pub fn path(&self, path: impl Into<Path>) -> Name {
         Name {
-            root: self.root.clone(),
+            root: self.root,
             path: path.into(),
         }
     }
 
-    pub fn get_root(&self) -> &Symbol {
-        &self.root
-    }
-
-    pub fn get_scope(&self) -> Scope {
-        self.root.get_scope()
+    pub fn root(&self) -> SymbolIndex {
+        self.root
     }
 
     /// A module is "closed" if it has no imports which need to be resolved.
@@ -124,7 +114,7 @@ impl IrKnowledgeBase {
         &self.symbols
     }
 
-    pub fn new_named_module_with_root(&mut self, root: Symbol) -> IrModuleRef {
+    pub fn module(&mut self, root: SymbolIndex) -> IrModuleRef {
         let handle = IrModuleRef(self.modules.len());
         self.modules.push_back(IrModule {
             entries: Vector::new(),
@@ -133,25 +123,6 @@ impl IrKnowledgeBase {
             root,
         });
         handle
-    }
-
-    pub fn new_named_module<S: AsRef<str>>(&mut self, name: S) -> IrModuleRef {
-        let mut symbols_write = self.symbols.write();
-
-        let handle = IrModuleRef(self.modules.len());
-        let scope = symbols_write.insert_unique_scope(name.as_ref());
-        let root = symbols_write.get_scope_metadata(scope).name.clone();
-        self.modules.push_back(IrModule {
-            entries: Vector::new(),
-            exports: HashSet::new(),
-            imports: HashMap::new(),
-            root: root.clone(),
-        });
-        handle
-    }
-
-    pub fn new_anonymous_module(&mut self) -> IrModuleRef {
-        self.new_named_module("")
     }
 
     pub fn parse_str<S: AsRef<str>>(
@@ -187,114 +158,6 @@ pub struct IrImport {
 }
 
 pub type IrImports = HashMap<Symbol, IrImport>;
-
-struct LinkModules<'ctx> {
-    symbols: &'ctx mut SymbolTableInner,
-    modules: &'ctx mut IrKnowledgeBase,
-    imports: &'ctx IrImports,
-    new_root_scope: Scope,
-    memo: HashMap<Name, Name>,
-}
-
-impl<'ctx> Fold for LinkModules<'ctx> {
-    fn fold_name(&mut self, _ir_graph: &mut IrTermGraph, name: &Name) -> Option<Name> {
-        if let Some(cached) = self.memo.get(name) {
-            return Some(cached.clone());
-        }
-
-        let sym = self.symbols.normalize(name);
-        //println!("Folding symbol {} => {:?}", sym, self.imports.get(&sym));
-        if let Some(import) = self.imports.get(&sym) {
-            let name = self.modules[import.from].path(import.path.clone());
-            let foreign = self.symbols.normalize(name.clone());
-            let local = self.new_root_scope.symbol(sym.ident());
-            self.symbols.alias(local.clone(), foreign);
-
-            let local_name = Name::from(local);
-            self.memo.insert(name, local_name.clone());
-
-            //println!("Folded: {}", local_name);
-
-            Some(local_name)
-        } else {
-            None
-        }
-    }
-}
-
-impl IrKnowledgeBase {
-    fn do_link(
-        &mut self,
-        terms: &mut IrTermGraph,
-        root: IrModuleRef,
-        imports: &IrImports,
-        new_module: IrModuleRef,
-    ) {
-        let mut entries = self[root].entries.clone();
-        let mut exports = self[root].exports.clone();
-
-        let new_root_scope = self[new_module].get_scope();
-        let symbols = terms.symbols().clone();
-        let mut link_modules = LinkModules {
-            symbols: &mut *symbols.write(),
-            modules: self,
-            imports,
-            new_root_scope,
-            memo: Default::default(),
-        };
-
-        for entry_mut in entries.iter_mut() {
-            if let Some(new_entry) = fold::fold_module_entry(&mut link_modules, terms, &*entry_mut)
-            {
-                *entry_mut = new_entry;
-            }
-        }
-
-        for export_mut in exports.iter_mut() {
-            if let Some(new_export) = fold::fold_name(&mut link_modules, terms, &*export_mut) {
-                *export_mut = new_export;
-            }
-        }
-
-        let import_module_set = imports
-            .values()
-            .map(|import| import.from)
-            .collect::<BTreeSet<_>>();
-
-        let combined_entries = import_module_set
-            .into_iter()
-            .map(|m| self[m].entries.clone())
-            .sum::<Vector<_>>()
-            + entries;
-
-        self[new_module].entries = combined_entries;
-        self[new_module].exports = exports;
-    }
-
-    // pub fn link_modules(
-    //     &mut self,
-    //     terms: &mut IrTermGraph,
-    //     root: IrModuleRef,
-    //     imports: &IrImports,
-    // ) -> IrModuleRef {
-    //     let module = self.new_anonymous_module();
-    //     self.do_link(terms, root, imports, module);
-    //     module
-    // }
-
-    pub fn link(&mut self, terms: &mut IrTermGraph, module: IrModuleRef) {
-        let imports = self[module].imports.clone();
-        for (_, import) in &imports {
-            if !self[import.from].is_closed() {
-                self.link(terms, import.from);
-            }
-        }
-
-        //println!("imports: {:?}", imports);
-        self.do_link(terms, module, &imports, module);
-        //println!("linked!");
-    }
-}
 
 #[cfg(test)]
 use serde_json::{json, Value as JsonValue};
@@ -335,7 +198,7 @@ impl IrModuleRef {
 #[cfg(test)]
 impl IrModule {
     pub fn to_json(&self, terms: &IrTermGraph) -> JsonValue {
-        let root = self.root.to_string();
+        let root = terms.symbols().read().display(self.root).to_string();
         let entries = self
             .entries
             .iter()

@@ -35,5 +35,5 @@ lalrpop = "0.17.2"
 
 [dev-dependencies]
 whisper_derive = { path = "../whisper_derive" }
-whisper = { path = "../whisper" }
+#whisper = { path = "../whisper" }
 egress = "0.1.1"

@@ -2,17 +2,28 @@ use ::{
     failure::Fail,
     im::Vector,
     parking_lot::RwLock,
-    std::{collections::HashMap, fmt, marker::PhantomPinned, mem, ops::Deref, ptr, sync::Arc},
+    std::{
+        collections::HashMap,
+        fmt,
+        marker::PhantomPinned,
+        mem,
+        ops::{Deref, Index},
+        ptr,
+        sync::Arc,
+    },
 };
 
 whisper_codegen::reserved_symbols! {
     symbol::Atom, atom!;
 
-    // Reserved scopes
-    pub "PUBLIC",
-    pub "INTERNAL",
-    pub "LOCAL",
-    mod "mod",
+    // Root scopes. It's very important these be in order because currently
+    // the order defines their IDs. Here, that's 0 through 3, inclusive.
+    super pub "PUBLIC",
+    super pub "INTERNAL",
+    super pub "LOCAL",
+    super mod "mod",
+
+    // Other reserved scopes
     mod "super",
     mod "std",
     mod "self",
@@ -75,55 +86,75 @@ pub enum NameError {
         display = "a scope with identifier `{}` already exists in this symbol table",
         _0
     )]
-    ScopeAlreadyDefined(Symbol),
+    ScopeAlreadyDefined(SymbolIndex),
 }
 
 /// Identifies a lexical scope.
+// #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+// pub struct Scope(SymbolIndex, usize);
+
+// impl Scope {
+//     pub const PUBLIC: Scope = Scope(Symbol::PUBLIC, 0);
+//     pub const INTERNAL: Scope = Scope(Symbol::INTERNAL, 0);
+
+//     /// Special scope used during compilation to represent a term which is
+//     /// only available in the local scope.
+//     pub const LOCAL: Scope = Scope(Symbol::LOCAL, 0);
+
+//     pub const MOD: Scope = Scope(Symbol::MOD, 0);
+
+//     const NUM_RESERVED: u64 = 4;
+
+//     pub const fn is_reserved(&self) -> bool {
+//         self.0 < Self::NUM_RESERVED
+//     }
+
+//     pub const fn get_id(&self) -> u64 {
+//         self.0
+//     }
+
+//     #[doc(hidden)]
+//     pub const fn from_id(id: u64) -> Self {
+//         Scope(id, 0)
+//     }
+
+//     pub fn symbol(&self, ident: impl Into<Ident>) -> Symbol {
+//         Symbol::new(ident.into(), *self)
+//     }
+// }
+
+// impl fmt::Display for Scope {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         match *self {
+//             Scope::PUBLIC => write!(f, "PUBLIC"),
+//             Scope::INTERNAL => write!(f, "INTERNAL"),
+//             Scope::LOCAL => write!(f, "LOCAL"),
+//             Scope::MOD => write!(f, "MOD"),
+//             Scope(other, _table) => write!(f, "{}", other),
+//         }
+//     }
+// }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Scope(u64, usize);
+pub struct SymbolIndex(pub usize, usize);
 
-unsafe impl Send for Scope {}
-unsafe impl Sync for Scope {}
-
-impl Scope {
-    pub const PUBLIC: Scope = Scope(0, 0);
-    pub const INTERNAL: Scope = Scope(1, 0);
-
-    /// Special scope used during compilation to represent a term which is
-    /// only available in the local scope.
-    pub const LOCAL: Scope = Scope(2, 0);
-
-    pub const MOD: Scope = Scope(3, 0);
-
-    const NUM_RESERVED: u64 = 4;
-
-    pub const fn is_reserved(&self) -> bool {
-        self.0 < Self::NUM_RESERVED
-    }
-
-    pub const fn get_id(&self) -> u64 {
-        self.0
-    }
-
-    #[doc(hidden)]
-    pub const fn from_id(id: u64) -> Self {
-        Scope(id, 0)
-    }
-
-    pub fn symbol(&self, ident: impl Into<Ident>) -> Symbol {
-        Symbol::new(ident.into(), *self)
+impl fmt::Display for SymbolIndex {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.is_builtin() {
+            BUILTINS_IDX_TO_SYM[self.0].ident.fmt(f)
+        } else {
+            self.0.fmt(f)
+        }
     }
 }
 
-impl fmt::Display for Scope {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Scope::PUBLIC => write!(f, "PUBLIC"),
-            Scope::INTERNAL => write!(f, "INTERNAL"),
-            Scope::LOCAL => write!(f, "LOCAL"),
-            Scope::MOD => write!(f, "MOD"),
-            Scope(other, _table) => write!(f, "{}", other),
-        }
+impl SymbolIndex {
+    pub fn is_reserved(&self) -> bool {
+        self.0 < NUM_RESERVED && self.1 == 0
+    }
+
+    pub fn is_builtin(&self) -> bool {
+        self.0 < NUM_BUILTINS && self.1 == 0
     }
 }
 
@@ -132,43 +163,49 @@ impl fmt::Display for Scope {
 pub struct Symbol {
     ident: Ident,
 
-    /// An integer ID manipulated to prevent name collisions.
-    /// This does have special values! TODO: iron this out and put those here
-    scope: Scope,
+    /// Scoped identifiers have parent scopes. The tree ends when
+    /// we hit a "builtin" scope.
+    parent: SymbolIndex,
 }
 
 impl Symbol {
-    pub const fn new(ident: Ident, scope: Scope) -> Self {
-        Self { ident, scope }
+    pub const fn new(ident: Ident, parent: SymbolIndex) -> Self {
+        Self { ident, parent }
     }
 
     pub fn ident(&self) -> &Ident {
         &self.ident
     }
 
-    pub fn get_scope(&self) -> Scope {
-        self.scope
+    pub fn parent(&self) -> SymbolIndex {
+        self.parent
     }
 
-    pub fn get_scope_ref(&self) -> &Scope {
-        &self.scope
-    }
-
-    pub fn is_scoped(&self) -> bool {
-        !self.scope.is_reserved()
-    }
-
-    pub fn is_scopable(&self) -> bool {
-        !self.scope.is_reserved() || self.scope == Scope::PUBLIC
+    pub fn is_builtin(&self) -> bool {
+        BUILTINS_IDX_TO_SYM.get(self.parent.0) == Some(self)
     }
 }
 
-impl fmt::Display for Symbol {
+pub struct DisplaySymbol<'a> {
+    sym: &'a Symbol,
+    table: &'a SymbolTableInner,
+}
+
+impl<'a> fmt::Display for DisplaySymbol<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.scope == Scope::PUBLIC {
-            write!(f, "{}", self.ident)
+        if self.sym.parent.is_reserved() {
+            if self.sym.parent == SymbolIndex::PUBLIC {
+                write!(f, "{}", self.sym.ident)
+            } else {
+                write!(f, "{}${}", self.sym.ident, self.sym.parent)
+            }
         } else {
-            write!(f, "{}${}", self.ident, self.scope)
+            write!(
+                f,
+                "{}::{}",
+                self.table.display(self.sym.parent),
+                self.sym.ident,
+            )
         }
     }
 }
@@ -183,7 +220,7 @@ impl From<Atom> for Symbol {
     fn from(atom: Atom) -> Self {
         Self {
             ident: Ident::from(atom),
-            scope: Scope::PUBLIC,
+            parent: SymbolIndex::PUBLIC,
         }
     }
 }
@@ -208,12 +245,12 @@ impl<'a> From<&'a Symbol> for Atom {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Name {
-    pub root: Symbol,
+    pub root: SymbolIndex,
     pub path: Path,
 }
 
-impl From<Symbol> for Name {
-    fn from(root: Symbol) -> Self {
+impl From<SymbolIndex> for Name {
+    fn from(root: SymbolIndex) -> Self {
         Self {
             root,
             path: Default::default(),
@@ -221,10 +258,15 @@ impl From<Symbol> for Name {
     }
 }
 
-impl fmt::Display for Name {
+pub struct DisplayName<'a> {
+    table: &'a SymbolTableInner,
+    name: &'a Name,
+}
+
+impl<'a> fmt::Display for DisplayName<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.root)?;
-        for segment in &self.path {
+        write!(f, "{}", self.table.display(self.name.root))?;
+        for segment in &self.name.path {
             write!(f, "::{}", segment)?;
         }
         Ok(())
@@ -233,7 +275,7 @@ impl fmt::Display for Name {
 
 pub type Path = Vector<Ident>;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Var {
     Named(Ident),
     Anonymous,
@@ -248,48 +290,12 @@ impl fmt::Display for Var {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ScopeMetadata {
-    pub name: Symbol,
-}
-
-lazy_static::lazy_static! {
-    static ref RESERVED_SCOPE_METADATA: &'static [ScopeMetadata] = {
-        Box::leak(Box::from(vec![
-            ScopeMetadata {
-                name: Symbol::PUBLIC,
-            },
-            ScopeMetadata {
-                name: Symbol::INTERNAL,
-            },
-            ScopeMetadata {
-                name: Symbol::LOCAL
-            },
-            ScopeMetadata {
-                name: Symbol::MOD
-            },
-        ]))
-    };
-
-    static ref RESERVED_SCOPES: &'static HashMap<Symbol, Scope> = {
-        let mut map = HashMap::new();
-        map.insert(Symbol::PUBLIC, Scope::PUBLIC);
-        map.insert(Symbol::INTERNAL, Scope::INTERNAL);
-        map.insert(Symbol::LOCAL, Scope::LOCAL);
-        map.insert(Symbol::MOD, Scope::MOD);
-        Box::leak(Box::from(map))
-    };
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SymbolIndex(pub usize);
-
 /// Symbol tables allow us to use integers to identify atoms in our heap, and
 /// merge the namespaces of multiple heaps so that integer identifiers that
 /// might be different in each heap but refer to the same symbol are reconciled.
 #[derive(Debug, Clone)]
 pub struct SymbolTable {
-    pub(crate) inner: Arc<RwLock<SymbolTableInner>>,
+    inner: Arc<RwLock<SymbolTableInner>>,
 }
 
 impl PartialEq for SymbolTable {
@@ -316,233 +322,8 @@ pub struct SymbolTableInner {
     builtins_to_symbol: &'static [Symbol],
     to_symbol: Vec<Symbol>,
 
-    builtins_to_index: &'static HashMap<Symbol, SymbolIndex>,
-    to_index: HashMap<Symbol, SymbolIndex>,
-
-    reserved_scopes: &'static HashMap<Symbol, Scope>,
-    reserved_scope_metadata: &'static [ScopeMetadata],
-    scopes: HashMap<Symbol, Scope>,
-    scope_metadata: Vec<ScopeMetadata>,
-}
-
-impl SymbolTableInner {
-    pub fn is_owner_of(&self, scope: Scope) -> bool {
-        self.pinned == scope.1
-    }
-
-    pub fn try_scope<S>(&self, scope_sym: S) -> Option<Scope>
-    where
-        S: Into<Symbol> + std::borrow::Borrow<Symbol>,
-    {
-        if scope_sym.borrow().get_scope().is_reserved() {
-            if let Some(scope) = self.reserved_scopes.get(scope_sym.borrow()) {
-                return Some(*scope);
-            }
-        }
-
-        if scope_sym.borrow().ident() == &ident_internal!("super") {
-            return Some(
-                self.get_scope_metadata(scope_sym.borrow().get_scope())
-                    .name
-                    .get_scope(),
-            );
-        }
-
-        self.scopes.get(scope_sym.borrow()).copied()
-    }
-
-    pub fn scope<S>(&mut self, scope_sym: S) -> Scope
-    where
-        S: Into<Symbol> + std::borrow::Borrow<Symbol>,
-    {
-        if scope_sym.borrow().get_scope().is_reserved() {
-            if let Some(scope) = self.reserved_scopes.get(scope_sym.borrow()) {
-                return *scope;
-            }
-        }
-
-        if scope_sym.borrow().ident() == &ident_internal!("super") {
-            return self
-                .get_scope_metadata(scope_sym.borrow().get_scope())
-                .name
-                .get_scope();
-        }
-
-        match self.scopes.get(scope_sym.borrow()) {
-            Some(scope) => *scope,
-            None => {
-                let new_scope = Scope(self.scopes.len() as u64 + Scope::NUM_RESERVED, self.pinned);
-                self.scopes.insert(scope_sym.borrow().clone(), new_scope);
-                self.scope_metadata.push(ScopeMetadata {
-                    name: scope_sym.into(),
-                });
-                new_scope
-            }
-        }
-    }
-
-    pub fn insert_unique_scope(&mut self, name: impl Into<Atom>) -> Scope {
-        let new_scope = Scope(self.scopes.len() as u64 + Scope::NUM_RESERVED, self.pinned);
-        let scope_name = new_scope.symbol(name.into());
-        self.scopes.insert(scope_name.clone(), new_scope);
-        self.scope_metadata.push(ScopeMetadata {
-            name: scope_name.clone(),
-        });
-        new_scope
-    }
-
-    pub fn get_scope_metadata(&self, scope: Scope) -> &ScopeMetadata {
-        if scope.is_reserved() {
-            &self.reserved_scope_metadata[scope.0 as usize]
-        } else {
-            assert!(self.is_owner_of(scope));
-            &self.scope_metadata[(scope.0 - Scope::NUM_RESERVED) as usize]
-        }
-    }
-
-    fn resolve_symbol(&mut self, symbol: &Symbol) -> SymbolIndex {
-        assert!(symbol.get_scope().is_reserved() || self.is_owner_of(symbol.get_scope()));
-
-        // If it's a reserved symbol, try the builtin hashmap first.
-        if symbol.scope.is_reserved() {
-            if let Some(idx) = self.builtins_to_index.get(symbol).copied() {
-                return idx;
-            }
-        }
-
-        let to_index = &mut self.to_index;
-        let to_symbol = &mut self.to_symbol;
-
-        *to_index.entry(symbol.clone()).or_insert_with(|| {
-            let i = to_symbol.len() + NUM_BUILTINS;
-            to_symbol.push(symbol.clone());
-            SymbolIndex(i)
-        })
-    }
-
-    fn try_resolve_symbol(&self, symbol: &Symbol) -> Option<SymbolIndex> {
-        assert!(symbol.get_scope().is_reserved() || self.is_owner_of(symbol.get_scope()));
-
-        // If it's a reserved symbol, try the builtin hashmap first.
-        if symbol.scope.is_reserved() {
-            if let Some(idx) = self.builtins_to_index.get(symbol).copied() {
-                return Some(idx);
-            }
-        }
-
-        self.to_index.get(&symbol).copied()
-    }
-
-    fn resolve_name(&mut self, name: Name) -> Symbol {
-        name.path.into_iter().fold(name.root, |acc, seg| {
-            let scope = self.scope(acc);
-            Symbol::new(seg, scope)
-        })
-    }
-
-    fn try_resolve_name(&self, name: Name) -> Option<Symbol> {
-        name.path
-            .into_iter()
-            .fold(Some(name.root), |maybe_acc, seg| {
-                let scope = self.try_scope(maybe_acc?)?;
-                Some(Symbol::new(seg, scope))
-            })
-    }
-
-    /// Alias one symbol to another.
-    ///
-    /// Panics if the symbol being aliased is already an alias to
-    /// a different symbol.
-    pub fn alias(&mut self, alias: Symbol, original: Symbol) {
-        assert_eq!(
-            {
-                let resolved = self.resolve(&alias);
-                &self.lookup(resolved)
-            },
-            &alias
-        );
-
-        let index = self.resolve_symbol(&original);
-        self.to_index.insert(alias, index);
-    }
-
-    pub fn lookup(&self, idx: SymbolIndex) -> Symbol {
-        if idx.0 < NUM_BUILTINS {
-            self.builtins_to_symbol[idx.0].clone()
-        } else {
-            self.to_symbol[idx.0 - NUM_BUILTINS].clone()
-        }
-    }
-
-    pub fn lookup_full(&self, idx: SymbolIndex) -> Name {
-        self.get_full_name(self.lookup(idx))
-    }
-
-    fn get_full_name(&self, symbol: Symbol) -> Name {
-        let mut path = Vector::new();
-        let mut root = symbol;
-        loop {
-            let scope_name = self.get_scope_metadata(root.scope).name.clone();
-
-            if root == scope_name {
-                break;
-            }
-
-            let prev_root = mem::replace(&mut root, scope_name);
-            path.push_front(prev_root.ident);
-        }
-
-        Name { path, root }
-    }
-
-    pub fn try_lookup(&self, idx: SymbolIndex) -> Option<Symbol> {
-        if idx.0 < NUM_BUILTINS {
-            Some(self.builtins_to_symbol[idx.0].clone())
-        } else {
-            self.to_symbol.get(idx.0 - NUM_BUILTINS).cloned()
-        }
-    }
-
-    pub fn contains_scope(&self, scope: Scope) -> bool {
-        scope.is_reserved() || self.is_owner_of(scope)
-    }
-
-    pub fn insert_anonymous_scope(&mut self) -> Scope {
-        self.insert_unique_scope(atom!(""))
-    }
-
-    pub fn resolve<I: Identifier>(&mut self, ident: I) -> SymbolIndex {
-        ident.resolve(self)
-    }
-
-    pub fn try_resolve<I: Identifier>(&self, ident: I) -> Option<SymbolIndex> {
-        ident.try_resolve(self)
-    }
-
-    pub fn normalize<I: Identifier>(&mut self, ident: I) -> Symbol {
-        ident.to_symbol(self)
-    }
-
-    pub fn normalize_full<I: Identifier>(&mut self, ident: I) -> Name {
-        let symbol = ident.to_symbol(self);
-        self.get_full_name(symbol)
-    }
-
-    /// Iterate over all symbols in the table, including builtins, in order.
-    pub fn iter(&mut self) -> SymbolIter {
-        SymbolIter {
-            inner: self,
-            index: 0,
-        }
-    }
-
-    /// Iterate over all symbols in the table, excluding builtins, in order.
-    pub fn iter_non_builtins(&mut self) -> SymbolIter {
-        SymbolIter {
-            inner: self,
-            index: NUM_BUILTINS,
-        }
-    }
+    builtins_to: &'static HashMap<Symbol, SymbolIndex>,
+    to: HashMap<Symbol, SymbolIndex>,
 }
 
 impl SymbolTable {
@@ -555,14 +336,8 @@ impl SymbolTable {
             builtins_to_symbol: &*BUILTINS_IDX_TO_SYM,
             to_symbol: Default::default(),
 
-            builtins_to_index: &*BUILTINS_SYM_TO_IDX,
-            to_index: Default::default(),
-
-            reserved_scopes: &*RESERVED_SCOPES,
-            reserved_scope_metadata: RESERVED_SCOPE_METADATA.clone(),
-
-            scopes: Default::default(),
-            scope_metadata: Default::default(),
+            builtins_to: &*BUILTINS_SYM_TO_IDX,
+            to: Default::default(),
         };
 
         let arc = Arc::new(RwLock::new(inner));
@@ -573,91 +348,427 @@ impl SymbolTable {
     }
 }
 
-pub trait Identifier: Clone + Sized {
-    fn resolve(self, symbol_table: &mut SymbolTableInner) -> SymbolIndex;
-    fn try_resolve(self, symbol_table: &SymbolTableInner) -> Option<SymbolIndex>;
+impl Index<SymbolIndex> for SymbolTableInner {
+    type Output = Symbol;
 
-    fn to_symbol(self, symbol_table: &mut SymbolTableInner) -> Symbol;
-}
-
-impl Identifier for Symbol {
-    fn resolve(self, symbol_table: &mut SymbolTableInner) -> SymbolIndex {
-        symbol_table.resolve_symbol(&self)
-    }
-
-    fn try_resolve(self, symbol_table: &SymbolTableInner) -> Option<SymbolIndex> {
-        symbol_table.try_resolve_symbol(&self)
-    }
-
-    fn to_symbol(self, _symbol_table: &mut SymbolTableInner) -> Symbol {
-        self
+    fn index(&self, idx: SymbolIndex) -> &Self::Output {
+        self.lookup(idx).unwrap()
     }
 }
 
-impl<'a> Identifier for &'a Symbol {
-    fn resolve(self, symbol_table: &mut SymbolTableInner) -> SymbolIndex {
-        symbol_table.resolve_symbol(self)
+impl SymbolTableInner {
+    pub fn valid(&self, sym: SymbolIndex) -> bool {
+        self.pinned == sym.1 || 0 == sym.1
     }
 
-    fn try_resolve(self, symbol_table: &SymbolTableInner) -> Option<SymbolIndex> {
-        symbol_table.try_resolve(self)
-    }
-    fn to_symbol(self, _symbol_table: &mut SymbolTableInner) -> Symbol {
-        self.clone()
-    }
-}
+    pub fn lookup(&self, idx: SymbolIndex) -> Option<&Symbol> {
+        if !self.valid(idx) {
+            return None;
+        }
 
-impl Identifier for Name {
-    fn resolve(self, symbol_table: &mut SymbolTableInner) -> SymbolIndex {
-        let symbol = symbol_table.resolve_name(self);
-        symbol.resolve(symbol_table)
-    }
-
-    fn try_resolve(self, symbol_table: &SymbolTableInner) -> Option<SymbolIndex> {
-        let symbol = symbol_table.try_resolve_name(self)?;
-        symbol.try_resolve(symbol_table)
-    }
-
-    fn to_symbol(self, symbol_table: &mut SymbolTableInner) -> Symbol {
-        let index = self.resolve(symbol_table);
-        symbol_table.lookup(index)
-    }
-}
-
-impl<'a> Identifier for &'a Name {
-    fn resolve(self, symbol_table: &mut SymbolTableInner) -> SymbolIndex {
-        self.clone().resolve(symbol_table)
-    }
-
-    fn try_resolve(self, symbol_table: &SymbolTableInner) -> Option<SymbolIndex> {
-        self.clone().try_resolve(symbol_table)
-    }
-
-    fn to_symbol(self, symbol_table: &mut SymbolTableInner) -> Symbol {
-        self.clone().to_symbol(symbol_table)
-    }
-}
-
-#[derive(Debug)]
-pub struct SymbolIter<'a> {
-    inner: &'a mut SymbolTableInner,
-    index: usize,
-}
-
-impl<'a> Iterator for SymbolIter<'a> {
-    type Item = (SymbolIndex, Symbol);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let maybe_sym = self.inner.try_lookup(SymbolIndex(self.index));
-        if let Some(sym) = maybe_sym {
-            self.index += 1;
-            let forward_index = self.inner.resolve_symbol(&sym);
-            Some((forward_index, sym))
+        let sym = if idx.is_builtin() {
+            &self.builtins_to_symbol[idx.0]
         } else {
-            None
+            &self.to_symbol[idx.0 - NUM_BUILTINS]
+        };
+
+        if sym.ident == ident_internal!("super") {
+            self.lookup(sym.parent)
+        } else {
+            Some(sym)
         }
     }
+
+    pub fn lookup_name(&self, symbol: SymbolIndex) -> Name {
+        let mut path = Vector::new();
+        let mut root = symbol;
+        loop {
+            let scope_name = self[root].parent();
+
+            if root == scope_name {
+                break;
+            }
+
+            let prev_root = mem::replace(&mut root, scope_name);
+            path.push_front(self[prev_root].ident().clone());
+        }
+
+        Name { path, root }
+    }
+
+    pub fn insert(&mut self, pre_ident: impl Into<Ident>) -> SymbolIndex {
+        self.insert_with_parent(pre_ident, SymbolIndex::PUBLIC)
+    }
+
+    pub fn insert_with_parent(
+        &mut self,
+        pre_ident: impl Into<Ident>,
+        parent: SymbolIndex,
+    ) -> SymbolIndex {
+        assert!(self.valid(parent));
+
+        let idx = SymbolIndex(
+            self.to_symbol.len() + self.builtins_to_symbol.len(),
+            self.pinned,
+        );
+
+        let ident = pre_ident.into();
+        let symbol = Symbol { ident, parent };
+
+        self.to_symbol.push(symbol.clone());
+        self.to.insert(symbol, idx);
+        idx
+    }
+
+    pub fn insert_gensym_with_parent(&mut self, parent: SymbolIndex) -> SymbolIndex {
+        assert!(self.valid(parent));
+        self.insert_with_parent(Ident::gensym(), parent)
+    }
+
+    pub fn insert_name(&mut self, pre_name: impl Into<Name>) -> SymbolIndex {
+        let name = pre_name.into();
+        name.path
+            .iter()
+            .fold(name.root, |prev, seg| self.insert_with_parent(seg, prev))
+    }
+
+    pub fn get(&self, symbol: &Symbol) -> Option<SymbolIndex> {
+        if symbol.is_builtin() {
+            Some(self.builtins_to[symbol])
+        } else {
+            self.to.get(symbol).copied()
+        }
+    }
+
+    pub fn get_name(&self, name: &Name) -> Option<SymbolIndex> {
+        name.path.iter().fold(Some(name.root), |maybe_prev, seg| {
+            maybe_prev.and_then(|prev| {
+                if seg == &ident_internal!("super") {
+                    self.lookup(prev).map(Symbol::parent)
+                } else {
+                    self.get(&Symbol::new(seg.clone(), prev))
+                }
+            })
+        })
+    }
+
+    pub fn display(&self, symbol: SymbolIndex) -> DisplaySymbol {
+        DisplaySymbol {
+            table: self,
+            sym: &self[symbol],
+        }
+    }
+
+    pub fn display_name<'a>(&'a self, name: &'a Name) -> DisplayName<'a> {
+        DisplayName { table: self, name }
+    }
+
+    // pub fn try_scope<S>(&self, scope_sym: S) -> Option<SymbolIndex>
+    // where
+    //     S: Into<Symbol> + std::borrow::Borrow<Symbol>,
+    // {
+    //     if scope_sym.borrow().scope().is_reserved() {
+    //         if let Some(scope) = self.reserved_scopes.get(scope_sym.borrow()) {
+    //             return Some(*scope);
+    //         }
+    //     }
+
+    //     if scope_sym.borrow().ident() == &ident_internal!("super") {
+    //         let name = self.get_scope_metadata(scope_sym.borrow().scope()).name;
+    //         return Some(self.lookup(name).scope());
+    //     }
+
+    //     let sym = self.resolve_symbol(scope_sym.borrow());
+    //     self.scopes.get(&sym).copied()
+    // }
+
+    // pub fn scope(&mut self, scope_name: SymbolIndex) -> Scope {
+    //     let scope_sym = self.lookup(scope_name);
+
+    //     if scope_sym.scope().is_reserved() {
+    //         if let Some(scope) = self.reserved_scopes.get(scope_name) {
+    //             return *scope;
+    //         }
+    //     }
+
+    //     if scope_name == Symbol::MOD_SUPER {
+    //         return scope_sym.scope();
+    //     }
+
+    //     match self.scopes.get(&scope_name) {
+    //         Some(scope) => *scope,
+    //         None => {
+    //             let new_scope = Scope(self.scopes.len() as u64 + Scope::NUM_RESERVED, self.pinned);
+    //             self.scopes.insert(scope_name, new_scope);
+    //             self.scope_metadata.push(ScopeMetadata { name: scope_name });
+    //             new_scope
+    //         }
+    //     }
+    // }
+
+    // pub fn insert_unique_scope(&mut self, name: impl Into<Atom>) -> Scope {
+    //     let new_scope = Scope(self.scopes.len() as u64 + Scope::NUM_RESERVED, self.pinned);
+    //     let scope_name = new_scope.symbol(name.into());
+    //     let sym = self.resolve_symbol(&scope_name);
+    //     self.scopes.insert(sym, new_scope);
+    //     self.scope_metadata.push(ScopeMetadata { name: sym });
+    //     new_scope
+    // }
+
+    // pub fn get_scope_metadata(&self, scope: Scope) -> &ScopeMetadata {
+    //     if scope.is_reserved() {
+    //         &self.reserved_scope_metadata[scope.0 as usize]
+    //     } else {
+    //         assert!(self.is_owner_of(scope));
+    //         &self.scope_metadata[(scope.0 - Scope::NUM_RESERVED) as usize]
+    //     }
+    // }
+
+    // fn resolve_symbol(&mut self, symbol: &Symbol) -> SymbolIndex {
+    //     assert!(symbol.scope().is_reserved() || self.is_owner_of(symbol.scope()));
+
+    //     // If it's a reserved symbol, try the builtin hashmap first.
+    //     if symbol.scope.is_reserved() {
+    //         if let Some(idx) = self.builtins_to.get(symbol).copied() {
+    //             return idx;
+    //         }
+    //     }
+
+    //     let to = &mut self.to;
+    //     let to_symbol = &mut self.to_symbol;
+
+    //     *to.entry(symbol.clone()).or_insert_with(|| {
+    //         let i = to_symbol.len() + NUM_BUILTINS;
+    //         to_symbol.push(symbol.clone());
+    //         SymbolIndex(i)
+    //     })
+    // }
+
+    // fn try_resolve_symbol(&self, symbol: &Symbol) -> Option<SymbolIndex> {
+    //     assert!(symbol.scope().is_reserved() || self.is_owner_of(symbol.scope()));
+
+    //     // If it's a reserved symbol, try the builtin hashmap first.
+    //     if symbol.scope.is_reserved() {
+    //         if let Some(idx) = self.builtins_to.get(symbol).copied() {
+    //             return Some(idx);
+    //         }
+    //     }
+
+    //     self.to.get(&symbol).copied()
+    // }
+
+    // fn resolve_name(&mut self, name: Name) -> Symbol {
+    //     name.path.into_iter().fold(name.root, |acc, seg| {
+    //         let scope = self.scope(acc);
+    //         Symbol::new(seg, scope)
+    //     })
+    // }
+
+    // fn try_resolve_name(&self, name: Name) -> Option<Symbol> {
+    //     name.path
+    //         .into_iter()
+    //         .fold(Some(name.root), |maybe_acc, seg| {
+    //             let scope = self.try_scope(maybe_acc?)?;
+    //             Some(Symbol::new(seg, scope))
+    //         })
+    // }
+
+    // /// Alias one symbol to another.
+    // ///
+    // /// Panics if the symbol being aliased is already an alias to
+    // /// a different symbol.
+    // pub fn alias(&mut self, alias: Symbol, original: Symbol) {
+    //     assert_eq!(
+    //         {
+    //             let resolved = self.resolve(&alias);
+    //             &self.lookup(resolved)
+    //         },
+    //         &alias
+    //     );
+
+    //     let index = self.resolve_symbol(&original);
+    //     self.to.insert(alias, index);
+    // }
+
+    // pub fn lookup(&self, idx: SymbolIndex) -> Symbol {
+    //     if idx.0 < NUM_BUILTINS {
+    //         self.builtins_to_symbol[idx.0].clone()
+    //     } else {
+    //         self.to_symbol[idx.0 - NUM_BUILTINS].clone()
+    //     }
+    // }
+
+    // pub fn lookup_full(&self, idx: SymbolIndex) -> Name {
+    //     self.get_full_name(self.lookup(idx))
+    // }
+
+    // fn get_full_name(&self, symbol: Symbol) -> Name {
+    //     let mut path = Vector::new();
+    //     let mut root = symbol;
+    //     loop {
+    //         let scope_name = self.get_scope_metadata(root.scope).name.clone();
+
+    //         if root == scope_name {
+    //             break;
+    //         }
+
+    //         let prev_root = mem::replace(&mut root, scope_name);
+    //         path.push_front(prev_root.ident);
+    //     }
+
+    //     Name { path, root }
+    // }
+
+    // pub fn try_lookup(&self, idx: SymbolIndex) -> Option<Symbol> {
+    //     if idx.0 < NUM_BUILTINS {
+    //         Some(self.builtins_to_symbol[idx.0].clone())
+    //     } else {
+    //         self.to_symbol.get(idx.0 - NUM_BUILTINS).cloned()
+    //     }
+    // }
+
+    // pub fn contains_scope(&self, scope: Scope) -> bool {
+    //     scope.is_reserved() || self.is_owner_of(scope)
+    // }
+
+    // pub fn insert_anonymous_scope(&mut self) -> Scope {
+    //     self.insert_unique_scope(atom!(""))
+    // }
+
+    // pub fn resolve<I: Identifier>(&mut self, ident: I) -> SymbolIndex {
+    //     ident.resolve(self)
+    // }
+
+    // pub fn try_resolve<I: Identifier>(&self, ident: I) -> Option<SymbolIndex> {
+    //     ident.try_resolve(self)
+    // }
+
+    // pub fn normalize<I: Identifier>(&mut self, ident: I) -> Symbol {
+    //     ident.to_symbol(self)
+    // }
+
+    // pub fn normalize_full<I: Identifier>(&mut self, ident: I) -> Name {
+    //     let symbol = ident.to_symbol(self);
+    //     self.get_full_name(symbol)
+    // }
+
+    // /// Iterate over all symbols in the table, including builtins, in order.
+    // pub fn iter(&mut self) -> SymbolIter {
+    //     SymbolIter {
+    //         inner: self,
+    //         index: 0,
+    //     }
+    // }
+
+    // /// Iterate over all symbols in the table, excluding builtins, in order.
+    // pub fn iter_non_builtins(&mut self) -> SymbolIter {
+    //     SymbolIter {
+    //         inner: self,
+    //         index: NUM_BUILTINS,
+    //     }
+    // }
 }
+
+// pub trait Identifier: Clone + Sized {
+//     fn resolve(self, symbol_table: &mut SymbolTableInner) -> SymbolIndex;
+//     fn try_resolve(self, symbol_table: &SymbolTableInner) -> Option<SymbolIndex>;
+
+//     fn to_symbol(self, symbol_table: &mut SymbolTableInner) -> Symbol;
+// }
+
+// impl Identifier for SymbolIndex {
+//     fn resolve(self, _symbol_table: &mut SymbolTableInner) -> SymbolIndex {
+//         self
+//     }
+
+//     fn try_resolve(self, _symbol_table: &SymbolTableInner) -> Option<SymbolIndex> {
+//         Some(self)
+//     }
+
+//     fn to_symbol(self, symbol_table: &mut SymbolTableInner) -> Symbol {
+//         symbol_table[self].clone()
+//     }
+// }
+
+// impl Identifier for Symbol {
+//     fn resolve(self, symbol_table: &mut SymbolTableInner) -> SymbolIndex {
+//         symbol_table.resolve_symbol(&self)
+//     }
+
+//     fn try_resolve(self, symbol_table: &SymbolTableInner) -> Option<SymbolIndex> {
+//         symbol_table.try_resolve_symbol(&self)
+//     }
+
+//     fn to_symbol(self, _symbol_table: &mut SymbolTableInner) -> Symbol {
+//         self
+//     }
+// }
+
+// impl<'a> Identifier for &'a Symbol {
+//     fn resolve(self, symbol_table: &mut SymbolTableInner) -> SymbolIndex {
+//         symbol_table.resolve_symbol(self)
+//     }
+
+//     fn try_resolve(self, symbol_table: &SymbolTableInner) -> Option<SymbolIndex> {
+//         symbol_table.try_resolve(self)
+//     }
+
+//     fn to_symbol(self, _symbol_table: &mut SymbolTableInner) -> Symbol {
+//         self.clone()
+//     }
+// }
+
+// impl Identifier for Name {
+//     fn resolve(self, symbol_table: &mut SymbolTableInner) -> SymbolIndex {
+//         let symbol = symbol_table.resolve_name(self);
+//         symbol.resolve(symbol_table)
+//     }
+
+//     fn try_resolve(self, symbol_table: &SymbolTableInner) -> Option<SymbolIndex> {
+//         let symbol = symbol_table.try_resolve_name(self)?;
+//         symbol.try_resolve(symbol_table)
+//     }
+
+//     fn to_symbol(self, symbol_table: &mut SymbolTableInner) -> Symbol {
+//         let index = self.resolve(symbol_table);
+//         symbol_table.lookup(index)
+//     }
+// }
+
+// impl<'a> Identifier for &'a Name {
+//     fn resolve(self, symbol_table: &mut SymbolTableInner) -> SymbolIndex {
+//         self.clone().resolve(symbol_table)
+//     }
+
+//     fn try_resolve(self, symbol_table: &SymbolTableInner) -> Option<SymbolIndex> {
+//         self.clone().try_resolve(symbol_table)
+//     }
+
+//     fn to_symbol(self, symbol_table: &mut SymbolTableInner) -> Symbol {
+//         self.clone().to_symbol(symbol_table)
+//     }
+// }
+
+// #[derive(Debug)]
+// pub struct SymbolIter<'a> {
+//     inner: &'a mut SymbolTableInner,
+//     index: usize,
+// }
+
+// impl<'a> Iterator for SymbolIter<'a> {
+//     type Item = (SymbolIndex, Symbol);
+
+//     fn next(&mut self) -> Option<Self::Item> {
+//         let maybe_sym = self.inner.lookup(SymbolIndex(self.index, inner.pinned));
+//         if let Some(sym) = maybe_sym {
+//             self.index += 1;
+//             let forward = self.inner.get(&sym).unwrap();
+//             Some((forward, sym))
+//         } else {
+//             None
+//         }
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
@@ -667,18 +778,24 @@ mod tests {
     #[test]
     fn super_scope() {
         let symbols = SymbolTable::new();
-        let list_module = Scope::PUBLIC.symbol("list");
-        let list_scope = symbols.write().scope(&list_module);
-        let map_module = list_scope.symbol("map");
-        let _map_scope = symbols.write().scope(&map_module);
-        let elem_module = list_scope.symbol("elem");
-        let _elem_scope = symbols.write().scope(&elem_module);
+        let mut symbols_mut = symbols.write();
+        let list_module = symbols_mut.insert_with_parent("list", SymbolIndex::MOD);
+        let map_module = symbols_mut.insert_with_parent("map", list_module);
+        let elem_module = symbols_mut.insert_with_parent("elem", list_module);
 
         let name = Name {
             root: map_module,
             path: vector![ident_internal!("super"), Ident::from("elem")],
         };
 
-        assert_eq!(symbols.write().normalize(name), elem_module);
+        let inserted = symbols_mut.get_name(&name).unwrap();
+
+        assert_eq!(
+            inserted,
+            elem_module,
+            "super scope not properly resolved: {} vs {}",
+            symbols_mut.display(inserted),
+            symbols_mut.display(elem_module),
+        );
     }
 }

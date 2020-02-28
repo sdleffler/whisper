@@ -143,6 +143,10 @@ impl Ident {
             id: NEXT_UNIQUE_ID.fetch_add(1, Ordering::SeqCst),
         }
     }
+
+    pub fn into_parts(self) -> (Atom, u64) {
+        (self.atom, self.id)
+    }
 }
 
 #[macro_export]
