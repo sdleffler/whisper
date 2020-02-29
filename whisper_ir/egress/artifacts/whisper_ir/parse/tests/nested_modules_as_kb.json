@@ -22,7 +22,7 @@
                       }
                     },
                     {
-                      "Const": "mod$MOD::foo"
+                      "Const": "mod$mod::foo"
                     }
                   ],
                   "kind": "Opaque"
@@ -55,7 +55,7 @@
                       }
                     },
                     {
-                      "Const": "mod$MOD::foo::bar::baz"
+                      "Const": "mod$mod::foo::bar::baz"
                     }
                   ],
                   "kind": "Opaque"
@@ -71,7 +71,7 @@
               }
             }
           ],
-          "root": "mod$MOD"
+          "root": "mod$mod"
         },
         {
           "entries": [
@@ -93,7 +93,7 @@
                       }
                     },
                     {
-                      "Const": "mod$MOD::bar"
+                      "Const": "mod$mod::bar"
                     }
                   ],
                   "kind": "Opaque"
@@ -109,7 +109,7 @@
               }
             }
           ],
-          "root": "foo$MOD"
+          "root": "foo$mod"
         },
         {
           "entries": [
@@ -131,7 +131,7 @@
                       }
                     },
                     {
-                      "Const": "mod$MOD::baz"
+                      "Const": "mod$mod::baz"
                     }
                   ],
                   "kind": "Opaque"
@@ -147,7 +147,7 @@
               }
             }
           ],
-          "root": "bar$4"
+          "root": "foo$mod::bar"
         },
         {
           "entries": [
@@ -163,7 +163,7 @@
               }
             }
           ],
-          "root": "baz$5"
+          "root": "foo$mod::bar::baz"
         }
       ]
     }

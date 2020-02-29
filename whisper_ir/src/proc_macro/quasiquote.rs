@@ -310,7 +310,7 @@ fn prelude_and_wrapper(
         },
         Mode::Term => quote! {
             #terms_ident: &mut whisper_ir::graph::IrTermGraph,
-            #root_ident: &whisper_ir::Symbol,
+            #root_ident: whisper_ir::SymbolIndex,
         },
     };
 

@@ -1,7 +1,7 @@
 use crate::{
     heap::{Heap, PortableHeap, PortableSymbol},
     word::{Tag, Word},
-    Symbol, SymbolIndex, SymbolTable,
+    SymbolIndex, SymbolTable,
 };
 
 use ::{
@@ -289,7 +289,7 @@ impl KnowledgeBase {
     }
 
     pub fn root(&self) -> &Module {
-        self.get(Symbol::MOD_INDEX).unwrap()
+        self.get(SymbolIndex::MOD).unwrap()
     }
 
     pub fn insert(&mut self, module: impl Into<Module>) {
@@ -302,13 +302,13 @@ impl KnowledgeBase {
         self.modules.remove(&name);
     }
 
-    pub fn import(&mut self, root: &Symbol, module: &PortableModule) {
+    pub fn import(&mut self, root: SymbolIndex, module: &PortableModule) {
         let module = module.into_module_with_root(self.symbols.clone(), root);
         //println!("Importing: {}", self.symbols.normalize_full(&module.name));
         self.insert(module);
     }
 
-    pub fn import_all(&mut self, name: &Symbol, portable_kb: &PortableKnowledgeBase) {
+    pub fn import_all(&mut self, name: SymbolIndex, portable_kb: &PortableKnowledgeBase) {
         for portable_module in &portable_kb.modules {
             self.import(name, portable_module);
         }
@@ -379,9 +379,9 @@ impl PortableModule {
             .map(|(idx, word, bytes)| {
                 let mut word = *word;
                 if word.get_tag() == Tag::Const {
-                    let name = self.heap.symbols[&word.get_value()]
-                        .into_name_with_root_module(&symbols, root);
-                    word = Word::r#const(root);
+                    let sym = self.heap.symbols[&word.get_value()]
+                        .into_symbol_with_root_module(&symbols, root);
+                    word = Word::r#const(sym.0);
                 }
 
                 (
@@ -436,15 +436,14 @@ impl PortableKnowledgeBase {
     pub fn into_knowledge_base_with_root(
         &self,
         symbols: SymbolTable,
-        root: &Symbol,
+        root: SymbolIndex,
     ) -> KnowledgeBase {
         let modules = self
             .modules
             .iter()
             .map(|module| {
                 let module = module.into_module_with_root(symbols.clone(), root);
-                let name = symbols.write().resolve(module.name());
-                (name, Module::from(module))
+                (module.name(), Module::from(module))
             })
             .collect();
 

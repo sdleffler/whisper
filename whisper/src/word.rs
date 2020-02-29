@@ -3,7 +3,7 @@ use ::{
     std::fmt,
 };
 
-use crate::{heap::Heap, SymbolIndex};
+use crate::heap::Heap;
 
 pub type UWordBits = u64;
 
@@ -127,7 +127,7 @@ impl Word {
     }
 
     #[inline]
-    pub fn r#const(index: SymbolIndex) -> Word {
+    pub fn r#const(index: usize) -> Word {
         UnpackedWord::Const(index).pack()
     }
 
@@ -203,7 +203,7 @@ impl Word {
         match self.0 & Tag::MASK_BITS {
             Tag::UINT32 => UInt32(v as u32),
             Tag::INT32 => Int32(v as i32),
-            Tag::CONST => Const(SymbolIndex(v as usize)),
+            Tag::CONST => Const(v as usize),
             Tag::FLOAT32 => Float32(f32::from_bits(v as u32)),
             Tag::STRUCT_ARITY => StructArity(v as usize),
             Tag::EXTERN_ARITY => ExternArity(v as usize),
@@ -398,7 +398,7 @@ impl From<UnpackedWord> for Word {
 pub enum UnpackedWord {
     UInt32(u32),
     Int32(i32),
-    Const(SymbolIndex),
+    Const(usize),
     Float32(f32),
     StructArity(usize),
     ExternArity(usize),
@@ -423,11 +423,9 @@ impl UnpackedWord {
             Int32(int) => int as UWordBits,
             Float32(f) => f.to_bits() as UWordBits,
 
-            Const(SymbolIndex(n))
-            | StructArity(n)
-            | ExternArity(n)
-            | BinaryArity(n)
-            | OpaqueArity(n) => n as UWordBits,
+            Const(n) | StructArity(n) | ExternArity(n) | BinaryArity(n) | OpaqueArity(n) => {
+                n as UWordBits
+            }
 
             Var(a) | Tagged(a) | Cons(a) | Cons2(a) | StructRef(a) | ExternRef(a)
             | BinaryRef(a) | OpaqueRef(a) => a as UWordBits,

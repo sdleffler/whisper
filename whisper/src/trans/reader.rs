@@ -148,10 +148,11 @@ impl<'heap> TermReader<'heap> for HeapReader<'heap> {
         match self.heap.chase(*h).unpack() {
             UInt32(u) => Some(v.visit_u32(u)),
             Int32(i) => Some(v.visit_i32(i)),
-            Const(index) => Some(v.visit_const(
-                &self.heap.symbols,
-                self.heap.symbols.read().lookup(index).into(),
-            )),
+            Const(index) => {
+                let symbols = self.heap.symbols();
+                let localized = symbols.index(index);
+                Some(v.visit_const(symbols, localized.into()))
+            }
             Float32(f) => Some(v.visit_f32(f)),
             StructArity(_) | ExternArity(_) | BinaryArity(_) | OpaqueArity(_) => unreachable!(),
             Var(addr) => Some(v.visit_var(whisper_ir::Var::Named(Ident::from_parts(

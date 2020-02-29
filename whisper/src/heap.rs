@@ -3,7 +3,7 @@ use crate::{
     maybe_shared::MaybeShared,
     trans::{HeapReader, HeapWriter},
     word::{Address, Tag, UnpackedWord, Word, WordOffset},
-    Ident, Name, Scope, Symbol, SymbolIndex, SymbolTable,
+    Ident, Name, SymbolIndex, SymbolTable,
 };
 
 use ::{
@@ -15,6 +15,7 @@ use ::{
         ops::{Deref, DerefMut},
         slice,
     },
+    whisper_ir::symbol::SymbolTableId,
 };
 
 pub type SharedHeap<'heap> = MaybeShared<'heap, Heap>;
@@ -140,7 +141,7 @@ impl<'heap> fmt::Display for DisplayHeap<'heap> {
                 match word.unpack() {
                     UInt32(uint) => write!(f, "UInt:{:04x}", uint)?,
                     Int32(int) => write!(f, "Int: {:04x}", int)?,
-                    Const(c) => write!(f, "Cnst:{:04x}", c.0)?,
+                    Const(c) => write!(f, "Cnst:{:04x}", c)?,
                     Float32(n) => write!(f, "Fl32:{:04x}", n as u16)?,
                     StructArity(a) => write!(f, "StAr:{:04x}", a)?,
                     ExternArity(a) => write!(f, "ExAr:{:04x}", a)?,
@@ -187,7 +188,11 @@ impl<'heap> fmt::Display for DisplayAt<'heap> {
             UInt32(i) => i.fmt(f),
             Int32(i) => i.fmt(f),
             Float32(v) => v.fmt(f),
-            Const(c) => write!(f, "\"{}\"", self.heap.symbols().read().lookup(c)),
+            Const(c) => {
+                let symbols = self.heap.symbols();
+                let indexed = symbols.index(c);
+                write!(f, "\"{}\"", symbols.read().display(indexed))
+            }
             StructArity(arity) => {
                 let display = self.heap.words[self.addr + 1..][..arity]
                     .iter()
@@ -252,7 +257,11 @@ impl<'heap> fmt::Display for DisplayWord<'heap> {
             UInt32(i) => i.fmt(f),
             Int32(i) => i.fmt(f),
             Float32(v) => v.fmt(f),
-            Const(c) => write!(f, "\"{}\"", self.heap.symbols().read().lookup(c)),
+            Const(c) => {
+                let symbols = self.heap.symbols();
+                let indexed = symbols.index(c);
+                write!(f, "\"{}\"", symbols.read().display(indexed))
+            }
             StructArity(arity) => write!(f, "StrA({})", arity),
             ExternArity(arity) => write!(f, "ExtA({})", arity),
             BinaryArity(arity) => write!(f, "BinA({})", arity),
@@ -302,21 +311,21 @@ impl Heap {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortableSymbol {
-    scope_id: u64,
-    path: Vec<String>,
+    sym_id: u64,
+    path: Vec<Ident>,
 }
 
 impl PortableSymbol {
     pub fn from_name(full_name: &Name) -> Self {
-        assert!(full_name.root.scope().is_reserved());
+        assert!(full_name.root.is_builtin());
         //println!("Serializing name: {}", full_name);
-        let path = full_name.path.iter().map(ToString::to_string).collect();
-        let scope_id = full_name.root.scope().get_id();
-        PortableSymbol { scope_id, path }
+        let path = full_name.path.iter().cloned().collect();
+        let sym_id = full_name.root.0 as u64;
+        PortableSymbol { sym_id, path }
     }
 
     pub fn from_symbol(symbols: &SymbolTable, symbol: SymbolIndex) -> Self {
-        let full_name = symbols.write().normalize_full(symbol);
+        let full_name = symbols.read().lookup_name(symbol);
         Self::from_name(&full_name)
     }
 
@@ -327,16 +336,16 @@ impl PortableSymbol {
     //     Name { root, path }
     // }
 
-    pub fn into_name_with_root_module(&self, symbols: &SymbolTable, root: SymbolIndex) -> Name {
-        let scope = Scope::from_id(self.scope_id);
+    pub fn into_name_with_root_module(&self, root: SymbolIndex) -> Name {
+        let scope = SymbolIndex(self.sym_id as usize, SymbolTableId::NULL);
 
-        let root = if scope == Scope::MOD {
-            root.clone()
+        let root = if scope == SymbolIndex::MOD {
+            root
         } else {
-            symbols.read().get_scope_metadata(scope).name
+            scope
         };
 
-        let path = self.path.iter().map(|s| Ident::from(&**s)).collect();
+        let path = self.path.iter().cloned().collect();
         let name = Name { root, path };
 
         //println!("Visiting: {}", symbols.normalize_full(&name));
@@ -347,10 +356,14 @@ impl PortableSymbol {
     //     symbols.normalize(self.into_name(symbols))
     // }
 
-    pub fn into_symbol_with_root_module(&self, symbols: &SymbolTable, root: &Symbol) -> Symbol {
+    pub fn into_symbol_with_root_module(
+        &self,
+        symbols: &SymbolTable,
+        root: SymbolIndex,
+    ) -> SymbolIndex {
         symbols
             .write()
-            .normalize(self.into_name_with_root_module(symbols, root))
+            .insert_name(self.into_name_with_root_module(root))
     }
 }
 
@@ -370,7 +383,7 @@ impl PortableHeap {
                 let full_name = heap
                     .symbols
                     .read()
-                    .lookup_full(SymbolIndex(word.get_value() as usize));
+                    .lookup_name(heap.symbols.index(word.get_value() as usize));
                 symbols.insert(word.get_value(), PortableSymbol::from_name(&full_name));
             }
         }
@@ -392,15 +405,14 @@ impl PortableHeap {
     //     Heap { symbols, words }
     // }
 
-    pub fn into_heap_with_root_module(&self, symbols: SymbolTable, root: &Symbol) -> Heap {
+    pub fn into_heap_with_root_module(&self, symbols: SymbolTable, root: SymbolIndex) -> Heap {
         let mut words = self.words.clone();
 
         for word in words.iter_mut() {
             if word.get_tag() == Tag::Const {
-                let name =
-                    self.symbols[&word.get_value()].into_name_with_root_module(&symbols, root);
-                let sym_index = symbols.write().resolve(name);
-                *word = Word::r#const(sym_index);
+                let sym_index =
+                    self.symbols[&word.get_value()].into_symbol_with_root_module(&symbols, root);
+                *word = Word::r#const(sym_index.0);
             }
         }
 

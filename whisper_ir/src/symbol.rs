@@ -136,7 +136,14 @@ pub enum NameError {
 // }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SymbolIndex(pub usize, usize);
+pub struct SymbolTableId(usize);
+
+impl SymbolTableId {
+    pub const NULL: SymbolTableId = SymbolTableId(0);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SymbolIndex(pub usize, pub SymbolTableId);
 
 impl fmt::Display for SymbolIndex {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -150,11 +157,11 @@ impl fmt::Display for SymbolIndex {
 
 impl SymbolIndex {
     pub fn is_reserved(&self) -> bool {
-        self.0 < NUM_RESERVED && self.1 == 0
+        self.0 < NUM_RESERVED && self.1 == SymbolTableId::NULL
     }
 
     pub fn is_builtin(&self) -> bool {
-        self.0 < NUM_BUILTINS && self.1 == 0
+        self.0 < NUM_BUILTINS && self.1 == SymbolTableId::NULL
     }
 }
 
@@ -182,7 +189,7 @@ impl Symbol {
     }
 
     pub fn is_builtin(&self) -> bool {
-        BUILTINS_IDX_TO_SYM.get(self.parent.0) == Some(self)
+        BUILTINS_SYM_TO_IDX.contains_key(self)
     }
 }
 
@@ -258,6 +265,28 @@ impl From<SymbolIndex> for Name {
     }
 }
 
+impl From<Ident> for Name {
+    fn from(ident: Ident) -> Self {
+        Self {
+            root: SymbolIndex::PUBLIC,
+            path: im::vector![ident],
+        }
+    }
+}
+
+// seriously?
+impl AsRef<Name> for Name {
+    fn as_ref(&self) -> &Self {
+        self
+    }
+}
+
+impl<'a> From<&'a Ident> for Name {
+    fn from(ident: &'a Ident) -> Self {
+        Self::from(ident.clone())
+    }
+}
+
 pub struct DisplayName<'a> {
     table: &'a SymbolTableInner,
     name: &'a Name,
@@ -296,6 +325,7 @@ impl fmt::Display for Var {
 #[derive(Debug, Clone)]
 pub struct SymbolTable {
     inner: Arc<RwLock<SymbolTableInner>>,
+    id: SymbolTableId,
 }
 
 impl PartialEq for SymbolTable {
@@ -316,7 +346,7 @@ impl Deref for SymbolTable {
 
 #[derive(Debug)]
 pub struct SymbolTableInner {
-    pinned: usize,
+    id: SymbolTableId,
     _phantom: PhantomPinned,
 
     builtins_to_symbol: &'static [Symbol],
@@ -330,7 +360,7 @@ impl SymbolTable {
     /// Make an empty symbol table.
     pub fn new() -> Self {
         let inner = SymbolTableInner {
-            pinned: 0,
+            id: SymbolTableId(0),
             _phantom: PhantomPinned,
 
             builtins_to_symbol: &*BUILTINS_IDX_TO_SYM,
@@ -342,9 +372,25 @@ impl SymbolTable {
 
         let arc = Arc::new(RwLock::new(inner));
         let arc_ptr = (&*arc) as *const _;
-        arc.write().pinned = arc_ptr as usize;
+        let id = SymbolTableId(arc_ptr as usize);
+        arc.write().id = id;
 
-        Self { inner: arc }
+        Self { inner: arc, id }
+    }
+
+    pub fn id(&self) -> SymbolTableId {
+        self.id
+    }
+
+    /// WARNING: This function assumes that you know this symbol is either
+    /// a builtin or is in this table! If you don't know this then this function
+    /// may cause strange behavior or panics elsewhere in your code!
+    pub fn index(&self, i: usize) -> SymbolIndex {
+        if i < NUM_BUILTINS {
+            SymbolIndex(i, SymbolTableId::NULL)
+        } else {
+            SymbolIndex(i, self.id())
+        }
     }
 }
 
@@ -358,7 +404,7 @@ impl Index<SymbolIndex> for SymbolTableInner {
 
 impl SymbolTableInner {
     pub fn valid(&self, sym: SymbolIndex) -> bool {
-        self.pinned == sym.1 || 0 == sym.1
+        self.id == sym.1 || SymbolTableId::NULL == sym.1
     }
 
     pub fn lookup(&self, idx: SymbolIndex) -> Option<&Symbol> {
@@ -407,13 +453,17 @@ impl SymbolTableInner {
     ) -> SymbolIndex {
         assert!(self.valid(parent));
 
-        let idx = SymbolIndex(
-            self.to_symbol.len() + self.builtins_to_symbol.len(),
-            self.pinned,
-        );
-
         let ident = pre_ident.into();
         let symbol = Symbol { ident, parent };
+
+        if let Some(idx) = self.get(&symbol) {
+            return idx;
+        }
+
+        let idx = SymbolIndex(
+            self.to_symbol.len() + self.builtins_to_symbol.len(),
+            self.id,
+        );
 
         self.to_symbol.push(symbol.clone());
         self.to.insert(symbol, idx);
@@ -425,11 +475,15 @@ impl SymbolTableInner {
         self.insert_with_parent(Ident::gensym(), parent)
     }
 
-    pub fn insert_name(&mut self, pre_name: impl Into<Name>) -> SymbolIndex {
-        let name = pre_name.into();
-        name.path
-            .iter()
-            .fold(name.root, |prev, seg| self.insert_with_parent(seg, prev))
+    pub fn insert_name(&mut self, pre_name: impl AsRef<Name>) -> SymbolIndex {
+        let name = pre_name.as_ref();
+        name.path.iter().fold(name.root, |prev, seg| {
+            if seg == &ident_internal!("super") {
+                self[prev].parent()
+            } else {
+                self.insert_with_parent(seg, prev)
+            }
+        })
     }
 
     pub fn get(&self, symbol: &Symbol) -> Option<SymbolIndex> {
@@ -652,21 +706,21 @@ impl SymbolTableInner {
     //     self.get_full_name(symbol)
     // }
 
-    // /// Iterate over all symbols in the table, including builtins, in order.
-    // pub fn iter(&mut self) -> SymbolIter {
-    //     SymbolIter {
-    //         inner: self,
-    //         index: 0,
-    //     }
-    // }
+    /// Iterate over all symbols in the table, including builtins, in order.
+    pub fn iter(&self) -> SymbolIter {
+        SymbolIter {
+            inner: self,
+            index: 0,
+        }
+    }
 
-    // /// Iterate over all symbols in the table, excluding builtins, in order.
-    // pub fn iter_non_builtins(&mut self) -> SymbolIter {
-    //     SymbolIter {
-    //         inner: self,
-    //         index: NUM_BUILTINS,
-    //     }
-    // }
+    /// Iterate over all symbols in the table, excluding builtins, in order.
+    pub fn iter_non_builtins(&self) -> SymbolIter {
+        SymbolIter {
+            inner: self,
+            index: NUM_BUILTINS,
+        }
+    }
 }
 
 // pub trait Identifier: Clone + Sized {
@@ -749,26 +803,35 @@ impl SymbolTableInner {
 //     }
 // }
 
-// #[derive(Debug)]
-// pub struct SymbolIter<'a> {
-//     inner: &'a mut SymbolTableInner,
-//     index: usize,
-// }
+#[derive(Debug)]
+pub struct SymbolIter<'a> {
+    inner: &'a SymbolTableInner,
+    index: usize,
+}
 
-// impl<'a> Iterator for SymbolIter<'a> {
-//     type Item = (SymbolIndex, Symbol);
+impl<'a> Iterator for SymbolIter<'a> {
+    type Item = (SymbolIndex, &'a Symbol);
 
-//     fn next(&mut self) -> Option<Self::Item> {
-//         let maybe_sym = self.inner.lookup(SymbolIndex(self.index, inner.pinned));
-//         if let Some(sym) = maybe_sym {
-//             self.index += 1;
-//             let forward = self.inner.get(&sym).unwrap();
-//             Some((forward, sym))
-//         } else {
-//             None
-//         }
-//     }
-// }
+    fn next(&mut self) -> Option<Self::Item> {
+        let maybe_sym = if self.index < NUM_BUILTINS + self.inner.to_symbol.len() {
+            if self.index < NUM_BUILTINS {
+                Some(SymbolIndex(self.index, SymbolTableId::NULL))
+            } else {
+                Some(SymbolIndex(self.index, self.inner.id))
+            }
+        } else {
+            None
+        };
+
+        if let Some(sym_idx) = maybe_sym {
+            self.index += 1;
+            let sym = &self.inner[sym_idx];
+            Some((sym_idx, sym))
+        } else {
+            None
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

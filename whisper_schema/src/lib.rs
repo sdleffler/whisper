@@ -63,7 +63,7 @@ use {
     whisper_ir::{
         graph::Blob,
         trans::{writer::VarScopeId, CompoundKind, TermEmitter, TermGraph, TermWriter},
-        Ident, Scope, Symbol, Var,
+        Ident, SymbolIndex, Var,
     },
 };
 
@@ -110,14 +110,14 @@ impl<'arena> SchemaNode<'arena> {
     {
         match self {
             SchemaNode::Var(v) => emitter.emit_var(var_scope, v.clone()),
-            SchemaNode::Const(s) => emitter.emit_const(Scope::PUBLIC.symbol(s.clone()).into()),
+            SchemaNode::Const(s) => emitter.emit_const(s.into()),
             SchemaNode::Int32(i) => emitter.emit_i32(*i),
             SchemaNode::UInt32(u) => emitter.emit_u32(*u),
             SchemaNode::Float32(f) => emitter.emit_f32(f.into_inner()),
             SchemaNode::Blob(b) => emitter.emit_blob(b.clone()),
             SchemaNode::Raw(raw) => emitter.emit_raw(*raw),
-            SchemaNode::ListNil => emitter.emit_const(Symbol::INTERNAL_LIST_NIL.into()),
-            SchemaNode::MapNil => emitter.emit_const(Symbol::INTERNAL_MAP_NIL.into()),
+            SchemaNode::ListNil => emitter.emit_const(SymbolIndex::INTERNAL_LIST_NIL.into()),
+            SchemaNode::MapNil => emitter.emit_const(SymbolIndex::INTERNAL_MAP_NIL.into()),
             SchemaNode::Compound(c) => emitter.emit_compound(var_scope, *c),
         }
     }
@@ -164,7 +164,7 @@ impl<'arena> TermGraph for SchemaGraph<'arena> {
                 h.visit(emitter, var_scope);
                 match t.split_first() {
                     Some((h, t)) => emitter.emit_compound(var_scope, SchemaCompound::Seq(h, t)),
-                    None => emitter.emit_const(Symbol::INTERNAL_LIST_NIL.into()),
+                    None => emitter.emit_const(SymbolIndex::INTERNAL_LIST_NIL.into()),
                 }
                 emitter.end_compound();
                 placement
@@ -179,7 +179,7 @@ impl<'arena> TermGraph for SchemaGraph<'arena> {
             }
             SchemaCompound::TupleVariant(name, args) => {
                 let placement = emitter.begin_compound(CompoundKind::Tagged);
-                emitter.emit_const(Symbol::from(name).into());
+                emitter.emit_const(Ident::from(name).into());
                 emitter.emit_compound(var_scope, SchemaCompound::Tuple(args));
                 emitter.end_compound();
                 placement
@@ -195,17 +195,17 @@ impl<'arena> TermGraph for SchemaGraph<'arena> {
                     Some((k, v, t)) => {
                         emitter.emit_compound(var_scope, SchemaCompound::Map(k, v, t))
                     }
-                    None => emitter.emit_const(Symbol::INTERNAL_MAP_NIL.into()),
+                    None => emitter.emit_const(SymbolIndex::INTERNAL_MAP_NIL.into()),
                 }
                 emitter.end_compound();
                 placement
             }
             SchemaCompound::StructVariant(name, fields) => {
                 let placement = emitter.begin_compound(CompoundKind::Tagged);
-                emitter.emit_const(Symbol::from(name).into());
+                emitter.emit_const(Ident::from(name).into());
 
                 if fields.is_empty() {
-                    emitter.emit_const(Symbol::INTERNAL_MAP_NIL.into());
+                    emitter.emit_const(SymbolIndex::INTERNAL_MAP_NIL.into());
                 } else {
                     emitter.emit_compound(
                         var_scope,
@@ -218,7 +218,7 @@ impl<'arena> TermGraph for SchemaGraph<'arena> {
             }
             SchemaCompound::Tagged(tag, value) => {
                 let placement = emitter.begin_compound(CompoundKind::Tagged);
-                emitter.emit_const(Symbol::from(tag).into());
+                emitter.emit_const(Ident::from(tag).into());
                 value.visit(emitter, var_scope);
                 emitter.end_compound();
                 placement

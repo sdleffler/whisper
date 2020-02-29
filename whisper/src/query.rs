@@ -2,7 +2,7 @@ use crate::{
     heap::Heap,
     maybe_shared::MaybeShared,
     word::{Address, Word},
-    Ident,
+    Ident, SymbolTable,
 };
 
 use ::{
@@ -45,6 +45,14 @@ impl fmt::Display for Query {
 }
 
 impl Query {
+    pub fn new(symbols: SymbolTable) -> Self {
+        Self {
+            heap: Heap::new(symbols),
+            goals: SmallVec::new(),
+            vars: QueryMap::new(),
+        }
+    }
+
     pub fn clear(&mut self) {
         self.heap.clear();
         self.goals.clear();

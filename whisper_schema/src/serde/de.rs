@@ -11,7 +11,7 @@ use ::{
         ident,
         symbol::Atom,
         trans::{CompoundKind, TermReader, TermVisitor},
-        Ident, Name, Symbol, SymbolTable, Var,
+        Ident, Name, SymbolIndex, SymbolTable, Var,
     },
 };
 
@@ -94,14 +94,14 @@ impl<'re, R: TermReader<'re, View = R>> TermVisitor<'re, R> for Data {
     }
 
     fn visit_const(self, symbols: &SymbolTable, name: Name) -> Self::Value {
-        match symbols.write().normalize(name) {
-            Symbol::UNIT => Datum::Unit,
-            Symbol::NONE => Datum::None,
-            Symbol::TRUE => Datum::Bool(true),
-            Symbol::FALSE => Datum::Bool(false),
-            Symbol::INTERNAL_LIST_NIL => Datum::ListNil,
-            Symbol::INTERNAL_MAP_NIL => Datum::MapNil,
-            other => Datum::Const(other.ident().clone()),
+        match symbols.write().insert_name(name) {
+            SymbolIndex::UNIT => Datum::Unit,
+            SymbolIndex::NONE => Datum::None,
+            SymbolIndex::TRUE => Datum::Bool(true),
+            SymbolIndex::FALSE => Datum::Bool(false),
+            SymbolIndex::INTERNAL_LIST_NIL => Datum::ListNil,
+            SymbolIndex::INTERNAL_MAP_NIL => Datum::MapNil,
+            other => Datum::Const(symbols.read()[other].ident().clone()),
         }
     }
 

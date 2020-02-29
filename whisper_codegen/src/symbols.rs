@@ -180,7 +180,9 @@ pub fn reserved_symbols(input: TokenStream) -> TokenStream {
         symbol_constants.push(quote!(pub const #constant_ident: Symbol = #constant_value;));
 
         let id = symbol_list.len();
-        index_constants.push(quote!(pub const #constant_ident: SymbolIndex = SymbolIndex(#id, 0);));
+        index_constants.push(
+            quote!(pub const #constant_ident: SymbolIndex = SymbolIndex(#id, SymbolTableId::NULL);),
+        );
 
         symbol_list.push(constant_ident);
     }

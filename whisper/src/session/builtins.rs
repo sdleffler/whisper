@@ -4,7 +4,7 @@ use crate::{
         ExternHandler, Frame, GoalRef, ModuleCache, Resolver, Trail, Unfolded, UnificationStack,
     },
     word::{Address, Tag},
-    Symbol, SymbolIndex,
+    SymbolIndex,
 };
 
 #[macro_export]
@@ -21,7 +21,8 @@ pub struct BuiltinContext<'sesh, H: ExternHandler, R: Resolver> {
     pub heap: &'sesh mut Heap,
     pub extern_handler: &'sesh mut H,
     pub extern_state: &'sesh mut H::State,
-    pub modules: &'sesh mut ModuleCache<R>,
+    pub modules: &'sesh mut ModuleCache,
+    pub resolver: &'sesh R,
     pub unifier: &'sesh mut UnificationStack,
     pub frame: &'sesh mut Frame<H::State>,
     pub trail: &'sesh mut Trail,
@@ -80,7 +81,9 @@ where
 {
     let prev_next_goal = ctx.trail[ctx.goal].next;
     let next_goal = ctx.heap[addr + 2];
-    let next_module = ctx.modules.get_or_insert(ctx.heap[addr + 3], ctx.heap);
+    let next_module = ctx
+        .modules
+        .get_or_insert(ctx.heap[addr + 3], ctx.heap, ctx.resolver);
 
     // println!(
     //     "`{}` in module with name `{}`",
@@ -109,11 +112,11 @@ where
         .debug_assert_tag(Tag::Const)
         .get_value() as usize;
 
-    match (arity, SymbolIndex(first)) {
-        (1, Symbol::CUT_INDEX) => builtin_cut(ctx),
-        (3, Symbol::IS_INDEX) => builtin_is(ctx, goal_addr),
-        (3, Symbol::LET_INDEX) => todo!("evaluation for `let` goals not implemented yet"),
-        (3, Symbol::TRY_INDEX) => builtin_try_in(ctx, goal_addr),
+    match (arity, ctx.heap.symbols().index(first)) {
+        (1, SymbolIndex::CUT) => builtin_cut(ctx),
+        (3, SymbolIndex::IS) => builtin_is(ctx, goal_addr),
+        (3, SymbolIndex::LET) => todo!("evaluation for `let` goals not implemented yet"),
+        (3, SymbolIndex::TRY) => builtin_try_in(ctx, goal_addr),
         _ => todo!(),
     }
 }

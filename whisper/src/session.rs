@@ -3,7 +3,7 @@ use crate::{
     knowledge_base::{KnowledgeBase, Matches, Module},
     query::{Query, QueryMap},
     word::{Address, Tag, Word},
-    Symbol, SymbolIndex, SymbolTable,
+    SymbolIndex, SymbolTable,
 };
 
 use ::{
@@ -367,9 +367,10 @@ impl Resolver for KnowledgeBase {
         self.symbols()
     }
 
-    fn resolve(&self, idx: Word, _heap: &Heap) -> Option<Module> {
+    fn resolve(&self, idx: Word, heap: &Heap) -> Option<Module> {
         self.get(SymbolIndex(
-            idx.debug_assert_tag(Tag::Const).get_value() as usize
+            idx.debug_assert_tag(Tag::Const).get_value() as usize,
+            heap.symbols().id(),
         ))
         .cloned()
     }
@@ -404,9 +405,11 @@ impl ModuleCache {
         }
     }
 
-    pub fn clear(&mut self) {
+    pub fn init(&mut self, resolver: &impl Resolver) {
         self.module_table.clear();
         self.modules.clear();
+        let root = resolver.root();
+        self.insert(Word::r#const(root.name().0), root);
     }
 
     fn insert(&mut self, scope: Word, module: Module) -> ModuleIndex {
@@ -431,9 +434,8 @@ impl ModuleCache {
         }
     }
 
-    pub fn root(&self, resolver: &impl Resolver) -> ModuleIndex {
-        let module = resolver.root();
-        let name = module.name
+    pub fn root(&self) -> ModuleIndex {
+        ModuleIndex(0)
     }
 }
 
@@ -475,22 +477,19 @@ impl<T: ExternFrame> Session<T> {
         &self.heap.symbols
     }
 
-    pub fn load<R>(&mut self, query: Query, modules: &ModuleCache<R>)
+    pub fn load(&mut self, query: Query, modules: &ModuleCache)
     where
         T: Default,
-        R: Resolver,
     {
         self.load_with_extern_state(query, modules, Default::default());
     }
 
-    pub fn load_with_extern_state<R>(
+    pub fn load_with_extern_state(
         &mut self,
         mut query: Query,
-        modules: &ModuleCache<R>,
+        modules: &ModuleCache,
         extern_state: T,
-    ) where
-        R: Resolver,
-    {
+    ) {
         self.load_with_extern_state_and_reuse_query(&mut query, modules, extern_state);
     }
 
@@ -499,14 +498,12 @@ impl<T: ExternFrame> Session<T> {
     /// *After calling this function, the `query` will not be the same `Query`. This
     /// function should only be used if you know what you are doing and are going for
     /// performance.*
-    pub fn load_with_extern_state_and_reuse_query<R>(
+    pub fn load_with_extern_state_and_reuse_query(
         &mut self,
         query: &mut Query,
-        modules: &ModuleCache<R>,
+        modules: &ModuleCache,
         extern_state: T,
-    ) where
-        R: Resolver,
-    {
+    ) {
         assert_eq!(self.symbols(), query.symbols());
 
         self.trail.clear();
@@ -552,8 +549,9 @@ impl<T: ExternFrame> Session<T> {
     // so much goddamn espresso my left eye won't stop twitching.
     pub fn resume_with_context<H>(
         &mut self,
-        modules: &mut ModuleCache<H::Resolver>,
+        modules: &mut ModuleCache,
         handler: &mut H,
+        resolver: &H::Resolver,
     ) -> Yield<T>
     where
         H: ExternHandler<State = T>,
@@ -659,6 +657,7 @@ impl<T: ExternFrame> Session<T> {
                                     state: &mut extern_state,
                                     frame,
                                     modules,
+                                    resolver,
                                     heap: &mut self.heap,
                                     trail: &mut self.trail,
                                     unifier: &mut self.unifier,
@@ -668,6 +667,7 @@ impl<T: ExternFrame> Session<T> {
                                     extern_handler: handler,
                                     extern_state: &mut extern_state,
                                     modules,
+                                    resolver,
                                     frame,
                                     heap: &mut self.heap,
                                     trail: &mut self.trail,
@@ -748,11 +748,8 @@ impl<T: ExternFrame> Session<T> {
 }
 
 impl Session<()> {
-    pub fn resume<R>(&mut self, modules: &mut ModuleCache<R>) -> bool
-    where
-        R: Resolver,
-    {
-        self.resume_with_context(modules, &mut NullHandler::default())
+    pub fn resume(&mut self, modules: &mut ModuleCache, knowledge_base: &KnowledgeBase) -> bool {
+        self.resume_with_context(modules, &mut NullHandler::default(), knowledge_base)
             .is_solution()
     }
 }
@@ -766,7 +763,8 @@ pub enum Unfolded {
 pub struct GoalContext<'sesh, T: ExternFrame, R: Resolver> {
     pub state: &'sesh mut T,
     pub frame: &'sesh mut Frame<T>,
-    pub modules: &'sesh mut ModuleCache<R>,
+    pub modules: &'sesh mut ModuleCache,
+    pub resolver: &'sesh R,
     pub heap: &'sesh mut Heap,
     pub unifier: &'sesh mut UnificationStack,
     pub trail: &'sesh mut Trail,
@@ -921,8 +919,14 @@ impl<R: Resolver> ExternHandler for NullHandler<R> {
     type Resolver = R;
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct DebugHandler<R: Resolver>(PhantomData<R>);
+
+impl<R: Resolver> Default for DebugHandler<R> {
+    fn default() -> Self {
+        DebugHandler(PhantomData)
+    }
+}
 
 impl<R: Resolver> ExternHandler for DebugHandler<R> {
     type State = ();

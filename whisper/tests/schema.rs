@@ -1,11 +1,7 @@
 use ::{
     itertools::Itertools,
     serde::{Deserialize, Serialize},
-    whisper::{
-        builder::QueryBuilder,
-        ir::{IrKnowledgeBase, IrNode, IrTermGraph},
-        Heap, SharedQuery, SimpleSession, Symbol, SymbolTable,
-    },
+    whisper::prelude::*,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -55,43 +51,47 @@ fn query_foo() {
     let mut modules = IrKnowledgeBase::new(symbol_table.clone());
     let mut terms = IrTermGraph::new(symbol_table.clone());
 
-    let validator_mod = modules.new_named_module_with_root(Symbol::MOD);
+    let validator_mod = modules.module(SymbolIndex::MOD);
     validator(&mut terms, &mut modules, validator_mod);
-    modules.link(&mut terms, validator_mod);
 
     let validator_kb = whisper::trans::knowledge_base(&terms, &modules);
 
-    let mut session = SimpleSession::new(symbol_table.clone(), validator_kb);
+    let mut session = SimpleSession::new(symbol_table.clone());
 
-    let heap = Heap::new(symbol_table.clone());
-    let mut builder = QueryBuilder::new(heap);
+    let mut query = Query::new(symbol_table.clone());
+
+    let mut builder = QueryBuilder::from(&mut query);
     let foo_addr = builder.bind(&Foo {
         maybe_thing: None,
         corge: true,
         bar: Bar::Baz(42),
     });
     let ir_query = validator_query(&mut terms, modules[validator_mod].root(), foo_addr);
-    let query = SharedQuery::from(builder.finish(&terms, &ir_query));
+    builder.push(&terms, &ir_query);
+    builder.finish();
 
-    session.load(query);
+    let mut module_cache = ModuleCache::new();
+    module_cache.init(&validator_kb);
+    session.load_with_extern_state_and_reuse_query(&mut query, &module_cache, ());
 
-    assert!(session.resume());
+    assert!(session.resume(&mut module_cache, &validator_kb));
     artifact.insert_display(
         "session query",
         &session.query_vars().iter().format_with(", ", |(k, v), f| {
             f(&format_args!("{} => {}", k, session.heap().display_at(*v)))
         }),
     );
-    assert!(!session.resume());
+    assert!(!session.resume(&mut module_cache, &validator_kb));
 
-    let heap = Heap::new(symbol_table.clone());
-    let mut builder = QueryBuilder::new(heap);
+    query.clear();
+    let mut builder = QueryBuilder::from(&mut query);
     let foo_addr = builder.bind(&Option::<bool>::None);
     let ir_query = validator_query(&mut terms, modules[validator_mod].root(), foo_addr);
-    let query = SharedQuery::from(builder.finish(&terms, &ir_query));
+    builder.push(&terms, &ir_query);
+    builder.finish();
 
-    session.load(query);
-    assert!(!session.resume());
+    session.load_with_extern_state_and_reuse_query(&mut query, &module_cache, ());
+    assert!(!session.resume(&mut module_cache, &validator_kb));
 
     egress.close_and_assert_unregressed().unwrap();
 }

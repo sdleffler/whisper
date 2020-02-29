@@ -52,7 +52,7 @@ pub use crate::{
     word::{Address, Tag, UnpackedWord, Word},
 };
 
-pub use whisper_ir::{Ident, Name, Scope, Symbol, SymbolIndex, SymbolTable, Var};
+pub use whisper_ir::{Ident, Name, Symbol, SymbolIndex, SymbolTable, Var};
 
 pub mod ir {
     pub use whisper_ir::graph::*;
@@ -71,10 +71,10 @@ pub mod prelude {
         heap::{Heap, SharedHeap},
         knowledge_base::{KnowledgeBase, Module},
         query::{Query, SharedQuery},
-        session::{Session, SimpleSession},
+        session::{ExternHandler, ModuleCache, Resolver, Session, SimpleSession},
     };
 
-    pub use whisper_ir::{graph::*, Ident, Name, Scope, Symbol, SymbolIndex, SymbolTable, Var};
+    pub use whisper_ir::{graph::*, Ident, Name, Symbol, SymbolIndex, SymbolTable, Var};
 }
 
 pub mod schema {
