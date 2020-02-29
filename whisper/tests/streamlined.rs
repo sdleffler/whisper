@@ -1,7 +1,7 @@
 use ::{
     failure::Error,
     serde::{Deserialize, Serialize},
-    whisper::{prelude::*, session::DebugHandler},
+    whisper::{constant, constants, prelude::*, session::DebugHandler},
 };
 
 whisper::knowledge_base! {
@@ -56,10 +56,10 @@ pub struct FooConfig {
     tls_enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(non_camel_case_types)]
-pub enum Keywords {
-    valid,
+constants! {
+    enum Keywords {
+        valid,
+    }
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn query_foo() -> Result<(), Error> {
     let solution = {
         let mut runtime = Runtime::new(&mut machine, &mut heap, &mut handler, &resolver);
         runtime.solve_once((&(
-            Keywords::valid,
+            constant!(valid),
             FooConfig {
                 tls: None,
                 tls_enabled: false,
@@ -106,7 +106,7 @@ fn query_foo() -> Result<(), Error> {
     let solution = {
         let mut runtime = Runtime::new(&mut machine, &mut heap, &mut handler, &resolver);
         runtime.solve_once((&(
-            Keywords::valid,
+            constant!(valid),
             FooConfig {
                 tls: Some(TlsConfig {
                     cert: Some("cert!".to_string()),
@@ -122,7 +122,7 @@ fn query_foo() -> Result<(), Error> {
     let solution = {
         let mut runtime = Runtime::new(&mut machine, &mut heap, &mut handler, &resolver);
         runtime.solve_once((&(
-            Keywords::valid,
+            constant!(valid),
             FooConfig {
                 tls: Some(TlsConfig {
                     cert: Some("cert!".to_string()),

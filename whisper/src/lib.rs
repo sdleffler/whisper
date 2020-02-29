@@ -80,3 +80,27 @@ pub mod prelude {
 pub mod schema {
     pub use whisper_schema::serde::{de, ser, Error};
 }
+
+#[macro_export]
+macro_rules! constant {
+    ($id:ident) => {{
+        #[derive(Serialize, Deserialize)]
+        #[allow(non_camel_case_types)]
+        enum __Keyword {
+            $id,
+        };
+
+        __Keyword::$id
+    }};
+}
+
+#[macro_export]
+macro_rules! constants {
+    ($v:vis enum $name:ident { $($id:ident),+ $(,)? }) => {
+        #[derive(Debug, Serialize, Deserialize)]
+        #[allow(non_camel_case_types)]
+        $v enum $name {
+            $($id),+
+        }
+    };
+}
