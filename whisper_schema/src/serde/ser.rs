@@ -4,7 +4,7 @@ use ::{
     whisper_ir::{
         graph::Blob,
         ident,
-        trans::{TermEmitter, TermWriter},
+        trans::{TermEmitter, TermWriter, VarScopeId},
         Ident, Var,
     },
 };
@@ -14,7 +14,7 @@ use crate::{
 };
 
 pub struct Serializer<'arena, 'w, W: TermWriter> {
-    emitter: &'w mut TermEmitter<W, SchemaGraph<'arena>>,
+    pub emitter: &'w mut TermEmitter<W, SchemaGraph<'arena>>,
 }
 
 pub fn to_writer<W, S>(writer: &mut W, schema: &S) -> Result<W::Placement, Error>
@@ -55,6 +55,22 @@ where
     let node = schema.serialize(&mut serializer)?;
     let mut emitter = serializer.emitter;
     let var_scope = emitter.insert_fresh_scope();
+    node.visit(&mut emitter, var_scope);
+    Ok(())
+}
+
+pub fn to_emitter_with_scope<'arena, W, S>(
+    emitter: &mut TermEmitter<W, SchemaGraph<'arena>>,
+    var_scope: VarScopeId,
+    schema: &S,
+) -> Result<(), Error>
+where
+    W: TermWriter,
+    S: Serialize,
+{
+    let mut serializer = Serializer { emitter };
+    let node = schema.serialize(&mut serializer)?;
+    let mut emitter = serializer.emitter;
     node.visit(&mut emitter, var_scope);
     Ok(())
 }

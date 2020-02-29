@@ -7,21 +7,18 @@ use crate::{
 };
 
 use ::{
-    failure::Fail,
+    failure::Error,
     smallvec::SmallVec,
     std::{collections::HashMap, fmt, marker::PhantomData, mem, ops::Index},
+    whisper_ir::trans::TermEmitter,
+    whisper_schema::{SchemaArena, SchemaGraph},
 };
 
 mod builtins;
+pub mod goal;
 
 use builtins::BuiltinContext;
-
-#[non_exhaustive]
-#[derive(Debug, Fail)]
-pub enum RuntimeError {
-    #[fail(display = "Foo.")]
-    Foo,
-}
+pub use goal::Goal;
 
 /// A point in the trail which can be unwound to.
 #[derive(Debug, Clone, Copy)]
@@ -34,20 +31,20 @@ pub struct Point {
 pub struct GoalRef(usize);
 
 #[derive(Debug, Clone)]
-pub struct Goal {
+pub struct GoalNode {
     pub next: Option<GoalRef>,
     pub address: Word,
     pub module: ModuleIndex,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Default)]
 pub struct Trail {
     trail: SmallVec<[Word; 64]>,
-    goals: SmallVec<[Goal; 64]>,
+    goals: SmallVec<[GoalNode; 64]>,
 }
 
 impl Index<GoalRef> for Trail {
-    type Output = Goal;
+    type Output = GoalNode;
 
     fn index(&self, idx: GoalRef) -> &Self::Output {
         &self.goals[idx.0]
@@ -56,10 +53,7 @@ impl Index<GoalRef> for Trail {
 
 impl Trail {
     pub fn new() -> Self {
-        Self {
-            trail: Default::default(),
-            goals: Default::default(),
-        }
+        Self::default()
     }
 
     pub fn clear(&mut self) {
@@ -94,7 +88,7 @@ impl Trail {
     #[inline]
     pub fn cons(&mut self, next: Option<GoalRef>, address: Word, module: ModuleIndex) -> GoalRef {
         let id = self.goals.len();
-        self.goals.push(Goal {
+        self.goals.push(GoalNode {
             next,
             address,
             module,
@@ -177,7 +171,7 @@ impl<S> Frame<S> {
 /// was done in the whitepaper this implementation is based on and I'm too lazy to change it. Also,
 /// easy separation of unification state from the rest of the `Session`'s important state. Convenient
 /// for passing stuff around.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct UnificationStack {
     stack: SmallVec<[(Word, Word); 64]>,
 }
@@ -194,9 +188,7 @@ pub struct UnificationContext<'sesh, H: ExternHandler> {
 
 impl UnificationStack {
     pub fn new() -> Self {
-        Self {
-            stack: SmallVec::new(),
-        }
+        Self::default()
     }
 
     #[inline]
@@ -383,7 +375,7 @@ impl Resolver for KnowledgeBase {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ModuleIndex(usize);
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Default)]
 pub struct ModuleCache {
     module_table: HashMap<Word, ModuleIndex>,
     modules: Vec<Module>,
@@ -399,10 +391,7 @@ impl Index<ModuleIndex> for ModuleCache {
 
 impl ModuleCache {
     pub fn new() -> Self {
-        Self {
-            module_table: HashMap::new(),
-            modules: Vec::new(),
-        }
+        Self::default()
     }
 
     pub fn init(&mut self, resolver: &impl Resolver) {
@@ -436,6 +425,349 @@ impl ModuleCache {
 
     pub fn root(&self) -> ModuleIndex {
         ModuleIndex(0)
+    }
+}
+
+#[derive(Debug)]
+pub struct Machine<T: ExternFrame> {
+    unifier: UnificationStack,
+    frames: SmallVec<[Frame<T>; 8]>,
+    trail: Trail,
+    module_cache: ModuleCache,
+}
+
+impl<T: ExternFrame> Default for Machine<T> {
+    fn default() -> Self {
+        Self {
+            unifier: UnificationStack::new(),
+            frames: SmallVec::new(),
+            trail: Trail::new(),
+            module_cache: ModuleCache::new(),
+        }
+    }
+}
+
+impl<T: ExternFrame> Machine<T> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn init(&mut self, resolver: &impl Resolver) {
+        self.unifier.clear();
+        self.frames.clear();
+        self.trail.clear();
+        self.module_cache.init(resolver);
+    }
+}
+
+#[derive(Debug)]
+pub struct Runtime<'all, H: ExternHandler> {
+    unifier: &'all mut UnificationStack,
+    frames: &'all mut SmallVec<[Frame<H::State>; 8]>,
+    trail: &'all mut Trail,
+    module_cache: &'all mut ModuleCache,
+    heap: &'all mut Heap,
+    handler: &'all mut H,
+    resolver: &'all H::Resolver,
+}
+
+impl<'all, H: ExternHandler> Runtime<'all, H> {
+    pub fn new(
+        machine: &'all mut Machine<H::State>,
+        heap: &'all mut Heap,
+        handler: &'all mut H,
+        resolver: &'all H::Resolver,
+    ) -> Self {
+        Self {
+            unifier: &mut machine.unifier,
+            frames: &mut machine.frames,
+            trail: &mut machine.trail,
+            module_cache: &mut machine.module_cache,
+            heap,
+            handler,
+            resolver,
+        }
+    }
+
+    pub fn from_query(
+        machine: &'all mut Machine<H::State>,
+        handler: &'all mut H,
+        resolver: &'all H::Resolver,
+        query: &'all mut Query,
+    ) -> Self {
+        Self {
+            unifier: &mut machine.unifier,
+            frames: &mut machine.frames,
+            trail: &mut machine.trail,
+            module_cache: &mut machine.module_cache,
+            heap: &mut query.heap,
+            handler,
+            resolver,
+        }
+    }
+
+    pub fn solve_once<G>(&mut self, goal: G) -> Result<Option<G::Output>, Error>
+    where
+        G: Goal,
+        H::State: Default,
+    {
+        let mut goal_addrs = SmallVec::<[Word; 8]>::new();
+        let arena = SchemaArena::new();
+        let schema_graph = SchemaGraph::new(&arena);
+        let mut emitter = TermEmitter::new(schema_graph, self.heap.write_top());
+        goal.emit(&mut emitter, &mut goal_addrs)?;
+
+        self.trail.clear();
+        self.frames.clear();
+        self.unifier.clear();
+
+        if !goal_addrs.is_empty() {
+            let module_idx = self.module_cache.root();
+            let first_goal = goal_addrs.first().copied().unwrap();
+
+            self.frames.push(Frame {
+                root_address: 0,
+                trail_point: self.trail.get(),
+                goals: self.trail.append(
+                    None,
+                    goal_addrs
+                        .iter()
+                        .copied()
+                        .map(|goal_addr| (goal_addr, module_idx)),
+                ),
+                matches: match first_goal.get_tag() {
+                    Tag::StructRef => self.module_cache[module_idx].search(self.heap, first_goal),
+                    _ => Matches::empty(),
+                },
+                extern_state: Default::default(),
+            });
+        }
+
+        if self.resume().is_solution() {
+            let extracted = G::extract(
+                &mut goal_addrs
+                    .iter()
+                    .map(|&w| self.heap.read_at(w.get_address())),
+            )?;
+
+            Ok(Some(extracted))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn solve_all<G>(&mut self, goal: G) -> Result<Vec<G::Output>, Error>
+    where
+        G: Goal,
+    {
+        let mut goal_addrs = SmallVec::<[Word; 8]>::new();
+        let arena = SchemaArena::new();
+        let schema_graph = SchemaGraph::new(&arena);
+        let mut emitter = TermEmitter::new(schema_graph, self.heap.write_top());
+        goal.emit(&mut emitter, &mut goal_addrs)?;
+
+        let mut solved = Vec::new();
+        while self.resume().is_solution() {
+            let extracted = G::extract(
+                &mut goal_addrs
+                    .iter()
+                    .map(|&w| self.heap.read_at(w.get_address())),
+            )?;
+            solved.push(extracted);
+        }
+
+        Ok(solved)
+    }
+
+    pub fn resume(&mut self) -> Yield<H::State> {
+        // We proceed by a depth-first search over the proof space. Well, in fancy-speak.
+        'searching: while let Some(frame) = self.frames.last_mut() {
+            //println!("'searching");
+
+            // We pick the first goal of the current stack frame and start matching against it.
+            if let Some(goal) = frame.goals {
+                let GoalNode {
+                    next: next_goal,
+                    address: goal_ref,
+                    module: goal_module_idx,
+                } = self.trail[goal];
+
+                let undo_match = self.trail.get(); // This trail point lets us undo any change of state made by unification.
+                let undo_addr = self.heap.len();
+
+                //println!("goal: {}", self.heap.display_word(goal_ref));
+
+                'backtrack: loop {
+                    let goal_module = &self.module_cache[goal_module_idx];
+
+                    let (mut remaining_goals, mut extern_state) = match goal_ref.get_tag() {
+                        Tag::StructRef => {
+                            'matching: loop {
+                                let relation_id = match frame.matches.next() {
+                                    Some(it) => it,
+                                    None => break 'backtrack,
+                                };
+
+                                let relation = &goal_module[relation_id];
+                                let head_ref = self.heap.copy_relation_head(goal_module, &relation);
+                                self.unifier.init(head_ref, goal_ref);
+
+                                // println!(
+                                //     "Matching relation {:?} => {}... ",
+                                //     relation_id,
+                                //     self.heap.display_word(head_ref),
+                                // );
+
+                                let mut extern_state = frame.extern_state.clone();
+
+                                if !self.unifier.unify(
+                                    &mut *self.handler,
+                                    &mut extern_state,
+                                    &mut *self.heap,
+                                    &mut *self.trail,
+                                    undo_addr,
+                                ) {
+                                    // println!("Unification failed.");
+                                    // In this case, unifying the head failed, so we have to undo the
+                                    // unification and put the heap back to where it was. Then, we try
+                                    // the next candidate.
+                                    self.trail.unwind(undo_match, &mut self.heap);
+                                    self.heap.words.truncate(undo_addr);
+
+                                    continue 'matching;
+                                }
+
+                                self.heap.copy_relation_body(goal_module, &relation);
+
+                                // Unification has succeeded. We need to  map the absolute addresses in the relation's source heap
+                                // address space to absolute addresses in the session heap, and then append those to the goal queue.
+                                let relocated = relation.goals.iter().map(|g| {
+                                    let relocated_addr =
+                                        g.get_address() - relation.start.get_address() + undo_addr;
+                                    let relocated_goal_word = g.with_address(relocated_addr);
+
+                                    (relocated_goal_word, goal_module_idx)
+                                });
+
+                                let remaining_goals = self.trail.append(next_goal, relocated);
+
+                                // println!("Success.");
+
+                                break 'matching (remaining_goals, extern_state);
+                            }
+                        }
+                        _ => (frame.goals, frame.extern_state.clone()),
+                    };
+
+                    let matches = 'finding_next_non_extern_goal: loop {
+                        // println!("'finding_next_non_extern_goal");
+
+                        if let Some(goal) = remaining_goals {
+                            let GoalNode {
+                                address: goal_ref,
+                                module: goal_module_idx,
+                                ..
+                            } = self.trail[goal];
+                            // println!("New goal `{}`; ", self.heap.display_word(goal_ref));
+
+                            // Check to see if the newest goal is an extern or builtin goal.
+                            let unfolded = match goal_ref.get_tag() {
+                                Tag::StructRef => {
+                                    let matches = self.module_cache[goal_module_idx]
+                                        .search(&self.heap, goal_ref);
+                                    break 'finding_next_non_extern_goal matches;
+                                }
+                                Tag::ExternRef => self.handler.handle_goal(GoalContext {
+                                    state: &mut extern_state,
+                                    frame,
+                                    modules: &mut *self.module_cache,
+                                    resolver: &*self.resolver,
+                                    heap: &mut *self.heap,
+                                    trail: &mut *self.trail,
+                                    unifier: &mut *self.unifier,
+                                    goal,
+                                }),
+                                Tag::OpaqueRef => builtins::handle_goal(&mut BuiltinContext {
+                                    extern_handler: &mut *self.handler,
+                                    extern_state: &mut extern_state,
+                                    modules: &mut *self.module_cache,
+                                    resolver: &*self.resolver,
+                                    frame,
+                                    heap: &mut *self.heap,
+                                    trail: &mut *self.trail,
+                                    unifier: &mut *self.unifier,
+                                    goal,
+                                }),
+                                _ => unreachable!(
+                                    "Goals should only start with an `Arity` or `Extern` word!"
+                                ),
+                            };
+
+                            // If the builtin/extern goal failed, we have to backtrack to the next match of the frame that called it. Same
+                            // procedure as we use when unification fails.
+                            match unfolded {
+                                Unfolded::Fail => {
+                                    self.trail.unwind(undo_match, &mut *self.heap);
+                                    self.heap.words.truncate(undo_addr);
+
+                                    continue 'backtrack; // Case 3: an extern goal has failed, and we have to backtrack.
+                                }
+                                Unfolded::Succeed(new_remaining_goals) => {
+                                    remaining_goals = new_remaining_goals; // Note this is not a loop exit; we're just
+                                                                           // popping the extern goal that just succeeded.
+                                                                           // The continue here is just for clarity.
+                                    continue 'finding_next_non_extern_goal;
+                                }
+                            }
+                        } else {
+                            if !frame.matches.is_empty() {
+                                self.frames.push(Frame {
+                                    root_address: undo_addr,
+                                    trail_point: undo_match,
+                                    goals: remaining_goals,
+                                    matches: Matches::empty(),
+                                    extern_state: extern_state.clone(),
+                                });
+                            }
+
+                            return Yield::Solution(extern_state); // Case 2: we've found a solution.
+                        }
+                    };
+
+                    // A minor optimization: if the previous frame is on its last match candidate, we can safely reuse it
+                    // in a sort of tail-call situation.
+                    // TODO: `ExactSizeIterator::exact_size_is_empty` is unstable; this is the same for now.
+                    if frame.matches.is_empty() {
+                        // println!(
+                        //     "matches empty, continuing with tail substitution."
+                        // );
+                        frame.goals = remaining_goals;
+                        frame.matches = matches;
+                        frame.extern_state = extern_state;
+                    } else {
+                        // println!("match list nonempty, pushing new frame.");
+                        self.frames.push(Frame {
+                            root_address: undo_addr,
+                            trail_point: undo_match,
+                            goals: remaining_goals,
+                            matches,
+                            extern_state,
+                        });
+                    }
+
+                    continue 'searching;
+                }
+            }
+
+            // Either we're resuming from a prior call, or we've run out of matches to try.
+            // We need to backtrack to get rid of old assignments before we can continue.
+            // println!("Unwinding...");
+            self.trail.unwind(frame.trail_point, &mut self.heap);
+            self.heap.words.truncate(frame.root_address);
+            self.frames.pop();
+        }
+
+        Yield::NoMoreSolutions
     }
 }
 
@@ -556,194 +888,17 @@ impl<T: ExternFrame> Session<T> {
     where
         H: ExternHandler<State = T>,
     {
-        // We proceed by a depth-first search over the proof space. Well, in fancy-speak.
-        'searching: while let Some(frame) = self.frames.last_mut() {
-            //println!("'searching");
+        let mut runtime = Runtime {
+            unifier: &mut self.unifier,
+            frames: &mut self.frames,
+            trail: &mut self.trail,
+            module_cache: modules,
+            heap: &mut self.heap,
+            handler,
+            resolver,
+        };
 
-            // We pick the first goal of the current stack frame and start matching against it.
-            if let Some(goal) = frame.goals {
-                let Goal {
-                    next: next_goal,
-                    address: goal_ref,
-                    module: goal_module_idx,
-                } = self.trail[goal];
-
-                let undo_match = self.trail.get(); // This trail point lets us undo any change of state made by unification.
-                let undo_addr = self.heap.len();
-
-                //println!("goal: {}", self.heap.display_word(goal_ref));
-
-                'backtrack: loop {
-                    let goal_module = &modules[goal_module_idx];
-
-                    let (mut remaining_goals, mut extern_state) = match goal_ref.get_tag() {
-                        Tag::StructRef => {
-                            'matching: loop {
-                                let relation_id = match frame.matches.next() {
-                                    Some(it) => it,
-                                    None => break 'backtrack,
-                                };
-
-                                let relation = &goal_module[relation_id];
-                                let head_ref = self.heap.copy_relation_head(goal_module, &relation);
-                                self.unifier.init(head_ref, goal_ref);
-
-                                // println!(
-                                //     "Matching relation {:?} => {}... ",
-                                //     relation_id,
-                                //     self.heap.display_word(head_ref),
-                                // );
-
-                                let mut extern_state = frame.extern_state.clone();
-
-                                if !self.unifier.unify(
-                                    handler,
-                                    &mut extern_state,
-                                    &mut self.heap,
-                                    &mut self.trail,
-                                    undo_addr,
-                                ) {
-                                    // println!("Unification failed.");
-                                    // In this case, unifying the head failed, so we have to undo the
-                                    // unification and put the heap back to where it was. Then, we try
-                                    // the next candidate.
-                                    self.trail.unwind(undo_match, &mut self.heap);
-                                    self.heap.words.truncate(undo_addr);
-
-                                    continue 'matching;
-                                }
-
-                                self.heap.copy_relation_body(goal_module, &relation);
-
-                                // Unification has succeeded. We need to  map the absolute addresses in the relation's source heap
-                                // address space to absolute addresses in the session heap, and then append those to the goal queue.
-                                let relocated = relation.goals.iter().map(|g| {
-                                    let relocated_addr =
-                                        g.get_address() - relation.start.get_address() + undo_addr;
-                                    let relocated_goal_word = g.with_address(relocated_addr);
-
-                                    (relocated_goal_word, goal_module_idx)
-                                });
-
-                                let remaining_goals = self.trail.append(next_goal, relocated);
-
-                                // println!("Success.");
-
-                                break 'matching (remaining_goals, extern_state);
-                            }
-                        }
-                        _ => (frame.goals, frame.extern_state.clone()),
-                    };
-
-                    let matches = 'finding_next_non_extern_goal: loop {
-                        // println!("'finding_next_non_extern_goal");
-
-                        if let Some(goal) = remaining_goals {
-                            let Goal {
-                                address: goal_ref,
-                                module: goal_module_idx,
-                                ..
-                            } = self.trail[goal];
-                            // println!("New goal `{}`; ", self.heap.display_word(goal_ref));
-
-                            // Check to see if the newest goal is an extern or builtin goal.
-                            let unfolded = match goal_ref.get_tag() {
-                                Tag::StructRef => {
-                                    let matches =
-                                        modules[goal_module_idx].search(&self.heap, goal_ref);
-                                    break 'finding_next_non_extern_goal matches;
-                                }
-                                Tag::ExternRef => handler.handle_goal(GoalContext {
-                                    state: &mut extern_state,
-                                    frame,
-                                    modules,
-                                    resolver,
-                                    heap: &mut self.heap,
-                                    trail: &mut self.trail,
-                                    unifier: &mut self.unifier,
-                                    goal,
-                                }),
-                                Tag::OpaqueRef => builtins::handle_goal(&mut BuiltinContext {
-                                    extern_handler: handler,
-                                    extern_state: &mut extern_state,
-                                    modules,
-                                    resolver,
-                                    frame,
-                                    heap: &mut self.heap,
-                                    trail: &mut self.trail,
-                                    unifier: &mut self.unifier,
-                                    goal,
-                                }),
-                                _ => unreachable!(
-                                    "Goals should only start with an `Arity` or `Extern` word!"
-                                ),
-                            };
-
-                            // If the builtin/extern goal failed, we have to backtrack to the next match of the frame that called it. Same
-                            // procedure as we use when unification fails.
-                            match unfolded {
-                                Unfolded::Fail => {
-                                    self.trail.unwind(undo_match, &mut self.heap);
-                                    self.heap.words.truncate(undo_addr);
-
-                                    continue 'backtrack; // Case 3: an extern goal has failed, and we have to backtrack.
-                                }
-                                Unfolded::Succeed(new_remaining_goals) => {
-                                    remaining_goals = new_remaining_goals; // Note this is not a loop exit; we're just
-                                                                           // popping the extern goal that just succeeded.
-                                                                           // The continue here is just for clarity.
-                                    continue 'finding_next_non_extern_goal;
-                                }
-                            }
-                        } else {
-                            if !frame.matches.is_empty() {
-                                self.frames.push(Frame {
-                                    root_address: undo_addr,
-                                    trail_point: undo_match,
-                                    goals: remaining_goals,
-                                    matches: Matches::empty(),
-                                    extern_state: extern_state.clone(),
-                                });
-                            }
-
-                            return Yield::Solution(extern_state); // Case 2: we've found a solution.
-                        }
-                    };
-
-                    // A minor optimization: if the previous frame is on its last match candidate, we can safely reuse it
-                    // in a sort of tail-call situation.
-                    // TODO: `ExactSizeIterator::exact_size_is_empty` is unstable; this is the same for now.
-                    if frame.matches.is_empty() {
-                        // println!(
-                        //     "matches empty, continuing with tail substitution."
-                        // );
-                        frame.goals = remaining_goals;
-                        frame.matches = matches;
-                        frame.extern_state = extern_state;
-                    } else {
-                        // println!("match list nonempty, pushing new frame.");
-                        self.frames.push(Frame {
-                            root_address: undo_addr,
-                            trail_point: undo_match,
-                            goals: remaining_goals,
-                            matches,
-                            extern_state,
-                        });
-                    }
-
-                    continue 'searching;
-                }
-            }
-
-            // Either we're resuming from a prior call, or we've run out of matches to try.
-            // We need to backtrack to get rid of old assignments before we can continue.
-            // println!("Unwinding...");
-            self.trail.unwind(frame.trail_point, &mut self.heap);
-            self.heap.words.truncate(frame.root_address);
-            self.frames.pop();
-        }
-
-        Yield::NoMoreSolutions
+        runtime.resume()
     }
 }
 

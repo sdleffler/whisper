@@ -33,6 +33,8 @@ pub enum Error {
 
     #[fail(display = "invalid input")]
     Invalid,
+    #[fail(display = "reader failure")]
+    ReaderFailure,
 
     #[fail(display = "`AsU64` variable option does not support anonymous variables")]
     AnonymousVariablesNotSupported,

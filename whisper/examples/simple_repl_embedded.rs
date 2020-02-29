@@ -2,10 +2,7 @@ use ::{
     failure::Error,
     itertools::Itertools,
     std::io::{self, prelude::*},
-    whisper::{
-        ir::{IrKnowledgeBase, IrTermGraph},
-        Heap, SharedQuery, SimpleSession, Symbol, SymbolTable,
-    },
+    whisper::prelude::*,
 };
 
 whisper::module! {
@@ -28,9 +25,8 @@ fn main() -> Result<(), Error> {
     let mut modules = IrKnowledgeBase::new(symbol_table.clone());
     let mut terms = IrTermGraph::new(symbol_table.clone());
 
-    let module = modules.new_named_module_with_root(Symbol::PUBLIC);
+    let module = modules.module(SymbolIndex::MOD);
     simple_knowledge_base(&mut terms, &mut modules, module);
-    modules.link(&mut terms, module);
 
     println!("Compiled module IR:\n{:?}", modules[module]);
 
@@ -38,31 +34,29 @@ fn main() -> Result<(), Error> {
 
     println!(
         "Compiled knowledge base:\n{}",
-        kb.get(Symbol::PUBLIC_INDEX).unwrap().display()
+        kb.get(SymbolIndex::MOD).unwrap().display()
     );
     // println!("(debug view)\n{:?}", kb);
 
-    let mut session = SimpleSession::new(symbol_table.clone(), kb);
+    let mut session = Session::new(symbol_table.clone());
+    let mut module_cache = ModuleCache::new();
+    module_cache.init(&kb);
 
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
         let ir_query = terms
-            .parse_query_str_with_root(modules[module].root().clone(), &line?)
+            .parse_query_str_with_root(modules[module].root(), &line?)
             .unwrap();
 
-        let query = SharedQuery::Owned(whisper::trans::query(
-            &terms,
-            &ir_query,
-            Heap::new(symbol_table.clone()),
-        ));
+        let query = whisper::trans::query(&terms, &ir_query, Heap::new(symbol_table.clone()));
 
-        println!("Compiled query:\n{}", *query);
+        println!("Compiled query:\n{}", query);
 
-        session.load(query);
+        session.load(query, &module_cache);
         let mut solutions_found = 0;
         const SOLUTION_LIMIT: usize = 32;
         loop {
-            if !session.resume() || solutions_found >= SOLUTION_LIMIT {
+            if !session.resume(&mut module_cache, &kb) || solutions_found >= SOLUTION_LIMIT {
                 if solutions_found >= SOLUTION_LIMIT {
                     println!(
                         "LIMIT EXCEEDED! Halting! (Limit: {} solutions)",

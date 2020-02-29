@@ -71,7 +71,7 @@ pub mod prelude {
         heap::{Heap, SharedHeap},
         knowledge_base::{KnowledgeBase, Module},
         query::{Query, SharedQuery},
-        session::{ExternHandler, ModuleCache, Resolver, Session, SimpleSession},
+        session::{ExternHandler, Machine, ModuleCache, Resolver, Runtime, Session, SimpleSession},
     };
 
     pub use whisper_ir::{graph::*, Ident, Name, Symbol, SymbolIndex, SymbolTable, Var};

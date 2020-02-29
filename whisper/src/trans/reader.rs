@@ -154,7 +154,22 @@ impl<'heap> TermReader<'heap> for HeapReader<'heap> {
                 Some(v.visit_const(symbols, localized.into()))
             }
             Float32(f) => Some(v.visit_f32(f)),
-            StructArity(_) | ExternArity(_) | BinaryArity(_) | OpaqueArity(_) => unreachable!(),
+            StructArity(n) => Some(v.visit_compound(
+                self.heap.symbols(),
+                CompoundKind::Struct(n),
+                HeapReader::new(self.heap, &t[..n]),
+            )),
+            ExternArity(n) => Some(v.visit_compound(
+                self.heap.symbols(),
+                CompoundKind::Extern(n),
+                HeapReader::new(self.heap, &t[..n]),
+            )),
+            BinaryArity(_) => unreachable!("can't read binary without tag"),
+            OpaqueArity(n) => Some(v.visit_compound(
+                self.heap.symbols(),
+                CompoundKind::Opaque(n),
+                HeapReader::new(self.heap, &t[..n]),
+            )),
             Var(addr) => Some(v.visit_var(whisper_ir::Var::Named(Ident::from_parts(
                 atom!(""),
                 addr as u64,

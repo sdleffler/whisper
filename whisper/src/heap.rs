@@ -13,7 +13,6 @@ use ::{
         collections::HashMap,
         fmt,
         ops::{Deref, DerefMut},
-        slice,
     },
     whisper_ir::symbol::SymbolTableId,
 };
@@ -114,7 +113,7 @@ impl Heap {
     }
 
     pub fn read_at(&self, addr: Address) -> HeapReader {
-        HeapReader::new(&self, slice::from_ref(&self[addr]))
+        HeapReader::new(&self, &self[addr..])
     }
 
     pub fn write_top(&mut self) -> HeapWriter {

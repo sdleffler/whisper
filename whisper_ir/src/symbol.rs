@@ -203,6 +203,8 @@ impl<'a> fmt::Display for DisplaySymbol<'a> {
         if self.sym.parent.is_reserved() {
             if self.sym.parent == SymbolIndex::PUBLIC {
                 write!(f, "{}", self.sym.ident)
+            } else if self.sym.parent == SymbolIndex::MOD {
+                write!(f, "::{}", self.sym.ident)
             } else {
                 write!(f, "{}${}", self.sym.ident, self.sym.parent)
             }

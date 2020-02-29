@@ -168,7 +168,7 @@ impl<'re, T: TermReader<'re>> Deserializer<'re, T> {
             },
 
             Datum::Var(_) => Err(ErrorKind::UnexpectedVariable)?,
-            Datum::Const(ident) => visitor.visit_enum(ident.str_ref().into_deserializer()),
+            Datum::Const(ident) => visitor.visit_str(ident.str_ref()),
             Datum::Int32(i) => visitor.visit_i32(i),
             Datum::UInt32(u) => visitor.visit_u32(u),
             Datum::Float32(f) => visitor.visit_f32(f),
@@ -242,7 +242,7 @@ impl<'de, 're, 'a, T: TermReader<'re>> de::Deserializer<'de> for &'a mut Deseria
     where
         V: Visitor<'de>,
     {
-        let datum = self.reader.read(Data).ok_or(ErrorKind::Invalid)?;
+        let datum = self.reader.read(Data).ok_or(ErrorKind::ReaderFailure)?;
         self.visit_datum(datum, visitor)
     }
 
@@ -256,18 +256,44 @@ impl<'de, 're, 'a, T: TermReader<'re>> de::Deserializer<'de> for &'a mut Deseria
         V: Visitor<'de>,
     {
         if self.config.variable_conf == VariableConfig::AsResult && name == "Result" {
-            match self.reader.read(Data).ok_or(ErrorKind::Invalid)? {
+            match self.reader.read(Data).ok_or(ErrorKind::ReaderFailure)? {
                 Datum::Var(var) => visitor.visit_enum(VarMockEnum::new(var)),
                 other => self.visit_datum(other, visitor),
             }
         } else {
-            self.deserialize_any(visitor)
+            match self.reader.read(Data).ok_or(ErrorKind::ReaderFailure)? {
+                Datum::Const(ident) => visitor.visit_enum(ident.str_ref().into_deserializer()),
+                Datum::Compound(CompoundKind::Tagged, mut reader) => {
+                    match reader.read(Data).ok_or(ErrorKind::Invalid)? {
+                        Datum::Const(tag) => visitor.visit_enum(Enum::new(tag, reader)),
+                        _ => Err(ErrorKind::Invalid)?,
+                    }
+                }
+                _ => Err(ErrorKind::Invalid)?,
+            }
         }
+    }
+
+    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Error>
+    where
+        V: Visitor<'de>,
+    {
+        match self.reader.read(Data).ok_or(ErrorKind::ReaderFailure)? {
+            Datum::Const(ident) => visitor.visit_str(ident.str_ref()),
+            _ => Err(ErrorKind::Invalid)?,
+        }
+    }
+
+    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Error>
+    where
+        V: Visitor<'de>,
+    {
+        self.deserialize_str(visitor)
     }
 
     serde::forward_to_deserialize_any! {
         bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char
-        str string bytes byte_buf option
+        bytes byte_buf option
         unit unit_struct newtype_struct seq tuple tuple_struct map
         struct identifier
         ignored_any
