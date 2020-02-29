@@ -94,7 +94,8 @@ impl<'re, R: TermReader<'re, View = R>> TermVisitor<'re, R> for Data {
     }
 
     fn visit_const(self, symbols: &SymbolTable, name: Name) -> Self::Value {
-        match symbols.write().insert_name(name) {
+        let name_index = symbols.write().insert_name(name);
+        match name_index {
             SymbolIndex::UNIT => Datum::Unit,
             SymbolIndex::NONE => Datum::None,
             SymbolIndex::TRUE => Datum::Bool(true),

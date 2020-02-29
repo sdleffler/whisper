@@ -1,11 +1,6 @@
 use ::{
     serde::{Deserialize, Serialize},
-    whisper::{
-        builder::QueryBuilder,
-        ir::{IrNode, IrTermGraph},
-        session::DebugHandler,
-        Heap, Session, Symbol,
-    },
+    whisper::{prelude::*, session::DebugHandler},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,46 +63,63 @@ whisper::query! {
 #[derive(Debug)]
 pub struct Typechecker {
     terms: IrTermGraph,
-    root: Symbol,
-    session: Session<DebugHandler>,
+    knowledge_base: KnowledgeBase,
+    module_cache: ModuleCache,
+    query: Query,
+    session: Session<()>,
 }
 
 impl Typechecker {
     pub fn new() -> Self {
-        use whisper::{ir::IrKnowledgeBase, SymbolTable};
         let symbols = SymbolTable::new();
         let mut terms = IrTermGraph::new(symbols.clone());
         let mut modules = IrKnowledgeBase::new(symbols.clone());
 
-        let stlc_module = modules.new_named_module_with_root(Symbol::PUBLIC);
+        let stlc_module = modules.module(SymbolIndex::MOD);
         stlc(&mut terms, &mut modules, stlc_module);
-        modules.link(&mut terms, stlc_module);
 
-        let root = modules[stlc_module].root().clone();
-
-        let stlc_kb = whisper::trans::knowledge_base(&terms, &modules);
+        let knowledge_base = whisper::trans::knowledge_base(&terms, &modules);
         println!(
             "Compiled knowledge base:\n{}",
-            stlc_kb.get(Symbol::PUBLIC_INDEX).unwrap().display()
+            knowledge_base.root().display()
         );
-        let stlc_session = Session::new(symbols.clone(), stlc_kb.into());
+        let session = Session::new(symbols.clone());
+        let mut module_cache = ModuleCache::new();
+        module_cache.init(&knowledge_base);
+        let query = Query::new(symbols.clone());
 
         Typechecker {
             terms,
-            root,
-            session: stlc_session,
+            knowledge_base,
+            module_cache,
+            query,
+            session,
         }
     }
 
     pub fn infer(&mut self, term: &Term) -> Option<Type> {
-        let mut builder = QueryBuilder::new(Heap::new(self.terms.symbols().clone()));
+        self.query.clear();
+        let mut builder = QueryBuilder::from(&mut self.query);
         let term_addr = builder.bind(term);
-        let ir_query = stlc_infer(&mut self.terms, &self.root, &term_addr);
-        let query = builder.finish(&self.terms, &ir_query);
+        let ir_query = stlc_infer(&mut self.terms, SymbolIndex::MOD, &term_addr);
+        builder.push(&self.terms, &ir_query);
+        builder.finish();
 
-        self.session.load(query.into());
+        self.session.load_with_extern_state_and_reuse_query(
+            &mut self.query,
+            &self.module_cache,
+            (),
+        );
 
-        if self.session.resume() {
+        if self
+            .session
+            .resume_with_context(
+                &mut self.module_cache,
+                &mut DebugHandler::default(),
+                &self.knowledge_base,
+            )
+            .is_solution()
+        {
             let addr = self.session.query_vars()[&"Tau".into()];
             Some(whisper_schema::serde::de::from_reader(self.session.heap().read_at(addr)).unwrap())
         } else {
@@ -122,8 +134,8 @@ fn main() {
         Term::Lam(0, Type::Base(132), Box::new(Term::Var(0))),
         Term::Var(1),
     )));
-    let ty = typechecker.infer(&term);
 
     println!("Whisper input: {:?}", term);
+    let ty = typechecker.infer(&term);
     println!("Whisper output: {:?}", ty);
 }
