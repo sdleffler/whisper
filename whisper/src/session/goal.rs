@@ -1,6 +1,6 @@
 use ::{
     failure::{format_err, Error},
-    serde::{de::DeserializeOwned, Serialize},
+    serde::{de::DeserializeOwned, Deserialize, Serialize, Serializer},
     smallvec::{Array, SmallVec},
     whisper_ir::trans::{CompoundKind, TermEmitter, VarScopeId},
     whisper_schema::SchemaGraph,
@@ -8,8 +8,43 @@ use ::{
 
 use crate::{
     trans::{HeapReader, HeapWriter},
-    word::Word,
+    word::{Address, Word},
 };
+
+fn variable_ser<S>(addr: &Address, ser: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    ser.serialize_newtype_struct("$Free", addr)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename = "$Variable")]
+enum VariableDe<T> {
+    #[serde(rename = "$Free")]
+    Free(Address),
+
+    #[serde(rename = "$Bound")]
+    Bound(T),
+}
+
+impl<T> From<VariableDe<T>> for Variable<T> {
+    fn from(variable_de: VariableDe<T>) -> Self {
+        match variable_de {
+            VariableDe::Free(addr) => Variable::Free(addr),
+            VariableDe::Bound(bound) => Variable::Bound(bound),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(from = "VariableDe<T>")]
+#[serde(untagged)]
+pub enum Variable<T> {
+    #[serde(serialize_with = "variable_ser")]
+    Free(Address),
+    Bound(T),
+}
 
 impl<'a, T> Searchable for &'a (T,)
 where

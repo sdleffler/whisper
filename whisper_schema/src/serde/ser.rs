@@ -206,7 +206,7 @@ impl<'ser, 'arena, 'w, B: TermWriter> ser::Serializer for &'ser mut Serializer<'
     where
         T: ?Sized + Serialize,
     {
-        if name == "$Var" {
+        if name == "$Free" {
             let var = value.serialize(&mut VariableSerHack)?;
             Ok(SchemaNode::Var(var))
         } else {
@@ -224,7 +224,7 @@ impl<'ser, 'arena, 'w, B: TermWriter> ser::Serializer for &'ser mut Serializer<'
     where
         T: ?Sized + Serialize,
     {
-        if name == "$Var" {
+        if name == "$Free" {
             let var = value.serialize(&mut VariableSerHack)?;
             Ok(SchemaNode::Var(var))
         } else {

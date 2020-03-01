@@ -18,7 +18,7 @@ use ::{
 use crate::serde::{Error as ErrorKind, SerdeCompatError as Error};
 
 /// Configure how the deserializer responds to free variables.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum VariableConfig {
     /// Fail parsing if we encounter a free variable. This is
     /// the default, and is usually what you want.
@@ -51,7 +51,7 @@ impl Default for VariableConfig {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Config {
     variable_conf: VariableConfig,
 }
@@ -156,13 +156,17 @@ impl<'re, T: TermReader<'re>> Deserializer<'re, T> {
         }
     }
 
-    fn visit_datum<'de, V>(&mut self, datum: Datum<T::View>, visitor: V) -> Result<V::Value, Error>
+    fn visit_datum<'de, V>(
+        config: Config,
+        datum: Datum<T::View>,
+        visitor: V,
+    ) -> Result<V::Value, Error>
     where
         V: Visitor<'de>,
     {
         use CompoundKind as Kind;
         match datum {
-            Datum::Var(var) if self.config.variable_conf == VariableConfig::AsU64 => match var {
+            Datum::Var(var) if config.variable_conf == VariableConfig::AsU64 => match var {
                 Var::Named(ident) => visitor.visit_u64(ident.id()),
                 Var::Anonymous => Err(ErrorKind::AnonymousVariablesNotSupported)?,
             },
@@ -223,6 +227,54 @@ impl<'re, T: TermReader<'re>> Deserializer<'re, T> {
             }
         }
     }
+
+    fn deserialize_enum<'de, V>(
+        config: Config,
+        datum: Datum<T::View>,
+        name: &'static str,
+        _variants: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Error>
+    where
+        V: Visitor<'de>,
+    {
+        if config.variable_conf == VariableConfig::AsResult && name == "Result" {
+            match datum {
+                Datum::Var(var) => visitor.visit_enum(FreeMockEnum::new(var)),
+                other => Self::visit_datum(config, other, visitor),
+            }
+        } else if name == "$Variable" {
+            match datum {
+                Datum::Var(var) => visitor.visit_enum(FreeMockEnum::new(var)),
+                other => visitor.visit_enum(BoundMockEnum::new(config, other)),
+            }
+        } else {
+            match datum {
+                Datum::Const(ident) => visitor.visit_enum(ident.str_ref().into_deserializer()),
+                Datum::Compound(CompoundKind::Tagged, mut reader) => {
+                    match reader.read(Data).ok_or(ErrorKind::Invalid)? {
+                        Datum::Const(tag) => visitor.visit_enum(Enum::new(tag, reader)),
+                        _ => Err(ErrorKind::Invalid)?,
+                    }
+                }
+                _ => Err(ErrorKind::Invalid)?,
+            }
+        }
+    }
+
+    fn deserialize_str<'de, V>(
+        _config: Config,
+        datum: Datum<T::View>,
+        visitor: V,
+    ) -> Result<V::Value, Error>
+    where
+        V: Visitor<'de>,
+    {
+        match datum {
+            Datum::Const(ident) => visitor.visit_str(ident.str_ref()),
+            _ => Err(ErrorKind::Invalid)?,
+        }
+    }
 }
 
 pub fn from_reader<'re, R, T>(reader: R) -> Result<T, ErrorKind>
@@ -243,7 +295,7 @@ impl<'de, 're, 'a, T: TermReader<'re>> de::Deserializer<'de> for &'a mut Deseria
         V: Visitor<'de>,
     {
         let datum = self.reader.read(Data).ok_or(ErrorKind::ReaderFailure)?;
-        self.visit_datum(datum, visitor)
+        Deserializer::<T>::visit_datum(self.config, datum, visitor)
     }
 
     fn deserialize_enum<V>(
@@ -255,36 +307,19 @@ impl<'de, 're, 'a, T: TermReader<'re>> de::Deserializer<'de> for &'a mut Deseria
     where
         V: Visitor<'de>,
     {
-        if self.config.variable_conf == VariableConfig::AsResult && name == "Result" {
-            match self.reader.read(Data).ok_or(ErrorKind::ReaderFailure)? {
-                Datum::Var(var) => visitor.visit_enum(VarMockEnum::new(var)),
-                other => self.visit_datum(other, visitor),
-            }
-        } else {
-            match self.reader.read(Data).ok_or(ErrorKind::ReaderFailure)? {
-                Datum::Const(ident) => visitor.visit_enum(ident.str_ref().into_deserializer()),
-                Datum::Compound(CompoundKind::Tagged, mut reader) => {
-                    match reader.read(Data).ok_or(ErrorKind::Invalid)? {
-                        Datum::Const(tag) => visitor.visit_enum(Enum::new(tag, reader)),
-                        _ => Err(ErrorKind::Invalid)?,
-                    }
-                }
-                _ => Err(ErrorKind::Invalid)?,
-            }
-        }
+        let datum = self.reader.read(Data).ok_or(ErrorKind::ReaderFailure)?;
+        Deserializer::<T>::deserialize_enum(self.config, datum, name, _variants, visitor)
     }
 
-    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Error>
+    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        match self.reader.read(Data).ok_or(ErrorKind::ReaderFailure)? {
-            Datum::Const(ident) => visitor.visit_str(ident.str_ref()),
-            _ => Err(ErrorKind::Invalid)?,
-        }
+        let datum = self.reader.read(Data).ok_or(ErrorKind::ReaderFailure)?;
+        Deserializer::<T>::deserialize_str(self.config, datum, visitor)
     }
 
-    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Error>
+    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
@@ -514,17 +549,17 @@ impl<'de> de::Deserializer<'de> for IdentDeserializer {
     }
 }
 
-struct VarMockEnum {
+struct FreeMockEnum {
     var: Var,
 }
 
-impl VarMockEnum {
+impl FreeMockEnum {
     fn new(var: Var) -> Self {
         Self { var }
     }
 }
 
-impl<'de> EnumAccess<'de> for VarMockEnum {
+impl<'de> EnumAccess<'de> for FreeMockEnum {
     type Error = Error;
     type Variant = Self;
 
@@ -532,12 +567,12 @@ impl<'de> EnumAccess<'de> for VarMockEnum {
     where
         V: DeserializeSeed<'de>,
     {
-        seed.deserialize("Err".into_deserializer())
+        seed.deserialize("$Free".into_deserializer())
             .map(|val| (val, self))
     }
 }
 
-impl<'de> VariantAccess<'de> for VarMockEnum {
+impl<'de> VariantAccess<'de> for FreeMockEnum {
     type Error = Error;
 
     fn unit_variant(self) -> Result<(), Error> {
@@ -552,6 +587,113 @@ impl<'de> VariantAccess<'de> for VarMockEnum {
             Var::Anonymous => seed.deserialize(().into_deserializer()),
             Var::Named(ident) => seed.deserialize(ident.to_string().into_deserializer()),
         }
+    }
+
+    fn tuple_variant<V>(self, _len: usize, _visitor: V) -> Result<V::Value, Error>
+    where
+        V: Visitor<'de>,
+    {
+        Err(ErrorKind::Invalid)?
+    }
+
+    fn struct_variant<V>(
+        self,
+        _fields: &'static [&'static str],
+        _visitor: V,
+    ) -> Result<V::Value, Error>
+    where
+        V: Visitor<'de>,
+    {
+        Err(ErrorKind::Invalid)?
+    }
+}
+
+struct BoundMockEnum<'re, R: TermReader<'re, View = R>> {
+    config: Config,
+    datum: Datum<R>,
+    _phantom: PhantomData<&'re ()>,
+}
+
+impl<'re, R: TermReader<'re, View = R>> BoundMockEnum<'re, R> {
+    fn new(config: Config, datum: Datum<R>) -> Self {
+        Self {
+            config,
+            datum,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<'de, 're, R: TermReader<'re, View = R>> de::Deserializer<'de> for BoundMockEnum<'re, R> {
+    type Error = Error;
+
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        Deserializer::<'re, R>::visit_datum(self.config, self.datum, visitor)
+    }
+
+    fn deserialize_enum<V>(
+        self,
+        name: &'static str,
+        _variants: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        Deserializer::<R>::deserialize_enum(self.config, self.datum, name, _variants, visitor)
+    }
+
+    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        Deserializer::<R>::deserialize_str(self.config, self.datum, visitor)
+    }
+
+    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        self.deserialize_str(visitor)
+    }
+
+    serde::forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char
+        bytes byte_buf option
+        unit unit_struct newtype_struct seq tuple tuple_struct map
+        struct identifier
+        ignored_any
+    }
+}
+
+impl<'de, 're, R: TermReader<'re, View = R>> EnumAccess<'de> for BoundMockEnum<'re, R> {
+    type Error = Error;
+    type Variant = Self;
+
+    fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant), Error>
+    where
+        V: DeserializeSeed<'de>,
+    {
+        seed.deserialize("$Bound".into_deserializer())
+            .map(|val| (val, self))
+    }
+}
+
+impl<'de, 're, R: TermReader<'re, View = R>> VariantAccess<'de> for BoundMockEnum<'re, R> {
+    type Error = Error;
+
+    fn unit_variant(self) -> Result<(), Error> {
+        Err(ErrorKind::Invalid)?
+    }
+
+    fn newtype_variant_seed<T>(self, seed: T) -> Result<T::Value, Error>
+    where
+        T: DeserializeSeed<'de>,
+    {
+        seed.deserialize(self)
     }
 
     fn tuple_variant<V>(self, _len: usize, _visitor: V) -> Result<V::Value, Error>
