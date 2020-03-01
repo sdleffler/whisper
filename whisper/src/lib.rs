@@ -72,8 +72,8 @@ pub mod prelude {
         knowledge_base::{KnowledgeBase, Module},
         query::{Query, SharedQuery},
         session::{
-            goal::Variable, ExternHandler, Machine, ModuleCache, Resolver, Runtime, Session,
-            SimpleSession,
+            goal::{Goal, Variable},
+            ExternHandler, Machine, ModuleCache, Resolver, Runtime, Session, SimpleSession,
         },
     };
 
