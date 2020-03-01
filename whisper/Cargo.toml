@@ -12,7 +12,6 @@ string_cache = "0.8.0"
 im = "14.2.0"
 roaring = "0.6.0"
 smallvec = { version = "1.1.0", features = ["serde"] }
-supercow = "0.1.0"
 regex = "1.3.3"
 failure = "0.1.6"
 itertools = "0.8.2"
@@ -26,7 +25,6 @@ num-integer = "0.1.42"
 lazy_static = "1.4.0"
 whisper_ir = { path = "../whisper_ir" }
 whisper_schema = { path = "../whisper_schema" }
-bark = { path = "../../bark" }
 
 [dev-dependencies]
 egress = "0.1.1"
