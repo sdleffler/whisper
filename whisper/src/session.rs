@@ -10,7 +10,7 @@ use ::{
     failure::Error,
     smallvec::SmallVec,
     std::{collections::HashMap, fmt, marker::PhantomData, mem, ops::Index},
-    whisper_ir::trans::TermEmitter,
+    whisper_ir::{trans::TermEmitter, IrKnowledgeBase, IrTermGraph},
     whisper_schema::{SchemaArena, SchemaGraph},
 };
 
@@ -461,6 +461,52 @@ impl<T: ExternFrame> Machine<T> {
 }
 
 #[derive(Debug)]
+pub struct SimpleSession<H>
+where
+    H: ExternHandler<State = (), Resolver = KnowledgeBase>,
+{
+    machine: Machine<()>,
+    heap: Heap,
+    knowledge_base: KnowledgeBase,
+    handler: H,
+}
+
+impl<H> SimpleSession<H>
+where
+    H: ExternHandler<State = (), Resolver = KnowledgeBase>,
+{
+    pub fn new<F>(symbols: SymbolTable, kb: F) -> Self
+    where
+        F: FnOnce(&mut IrTermGraph) -> IrKnowledgeBase,
+        H: Default,
+    {
+        let mut terms = IrTermGraph::new(symbols);
+        let modules = kb(&mut terms);
+        let knowledge_base = crate::trans::knowledge_base(&terms, &modules);
+        let mut machine = Machine::new();
+        machine.init(&knowledge_base);
+        let heap = Heap::new(knowledge_base.symbols().clone());
+        let handler = H::default();
+
+        Self {
+            machine,
+            heap,
+            knowledge_base,
+            handler,
+        }
+    }
+
+    pub fn run(&mut self) -> Runtime<H> {
+        Runtime::new(
+            &mut self.machine,
+            &mut self.heap,
+            &mut self.handler,
+            &self.knowledge_base,
+        )
+    }
+}
+
+#[derive(Debug)]
 pub struct Runtime<'all, H: ExternHandler> {
     unifier: &'all mut UnificationStack,
     frames: &'all mut SmallVec<[Frame<H::State>; 8]>,
@@ -770,8 +816,6 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
         Yield::NoMoreSolutions
     }
 }
-
-pub type SimpleSession = Session<()>;
 
 #[derive(Debug)]
 pub struct Session<T: ExternFrame> {

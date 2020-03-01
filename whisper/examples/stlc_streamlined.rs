@@ -4,15 +4,11 @@ use ::{
 };
 
 macro_rules! map(
-    { $($key:expr => $value:expr),+ } => {
-        {
-            let mut m = ::std::collections::HashMap::new();
-            $(
-                m.insert($key, $value);
-            )+
-            m
-        }
-     };
+    { $($key:expr => $value:expr),+ } => {{
+        let mut m = ::std::collections::HashMap::new();
+        $(m.insert($key, $value);)+
+        m
+    }};
 );
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,10 +27,6 @@ pub enum Term {
 
 whisper::knowledge_base! {
     fn stlc();
-
-    context Gamma proves Term is_type Sigma if
-        context Gamma proves Term is_type Sigma in extern,
-        fail;
 
     // Rule 1.) Variables can be typed if they are in the context.
     context { X: Sigma | Gamma } proves ("Var" : X) is_type Sigma;
@@ -55,10 +47,6 @@ whisper::knowledge_base! {
     context Gamma proves ("App" : (E1 E2)) is_type Tau if
         context Gamma proves E1 is_type ("Fun" : (Sigma Tau)),
         context Gamma proves E2 is_type Sigma;
-
-    context Gamma proves Term is_type Sigma if
-        context Gamma proves Term is_type Sigma failed in extern,
-        fail;
 }
 
 constants! {
@@ -71,42 +59,19 @@ constants! {
 
 #[derive(Debug)]
 pub struct Typechecker {
-    machine: Machine<()>,
-    heap: Heap,
-    knowledge_base: KnowledgeBase,
-    handler: NullHandler<KnowledgeBase>,
+    session: SimpleSession<NullHandler<KnowledgeBase>>,
 }
 
 impl Typechecker {
     pub fn new() -> Self {
-        let symbols = SymbolTable::new();
-        let mut terms = IrTermGraph::new(symbols.clone());
-        let modules = stlc(&mut terms);
-        let knowledge_base = whisper::trans::knowledge_base(&terms, &modules);
-
-        let mut machine = Machine::new();
-        machine.init(&knowledge_base);
-
-        let heap = Heap::new(symbols);
-        let handler = NullHandler::default();
-
-        Typechecker {
-            machine,
-            heap,
-            knowledge_base,
-            handler,
-        }
+        let session = SimpleSession::new(SymbolTable::new(), stlc);
+        Self { session }
     }
 
     pub fn infer(&mut self, term: &Term) -> Option<Type> {
-        let mut runtime = Runtime::new(
-            &mut self.machine,
-            &mut self.heap,
-            &mut self.handler,
-            &self.knowledge_base,
-        );
-
-        let maybe_solution = runtime
+        let maybe_solution = self
+            .session
+            .run()
             .solve_once((&(
                 Kw::context,
                 map!(1 => Variable::<Type>::Free(0)),
@@ -116,6 +81,7 @@ impl Typechecker {
                 Variable::<Type>::Free(1),
             ),))
             .ok()?;
+
         let ((_, _, _, _, _, tau),) = maybe_solution?;
 
         match tau {

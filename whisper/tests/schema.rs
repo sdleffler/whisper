@@ -56,7 +56,7 @@ fn query_foo() {
 
     let validator_kb = whisper::trans::knowledge_base(&terms, &modules);
 
-    let mut session = SimpleSession::new(symbol_table.clone());
+    let mut session = Session::new(symbol_table.clone());
 
     let mut query = Query::new(symbol_table.clone());
 
