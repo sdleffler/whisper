@@ -1,6 +1,6 @@
 use ::{
     serde::{Deserialize, Serialize},
-    whisper::{constants, prelude::*, session::DebugHandler},
+    whisper::{constants, prelude::*, session::NullHandler},
 };
 
 macro_rules! map(
@@ -69,23 +69,12 @@ constants! {
     }
 }
 
-// whisper::query! {
-//     fn stlc_infer(term: &IrNode);
-
-//     // Note that if the line below weren't commented out, #term is
-//     // parsed as `(#term)` because it is of type `IrNode` and
-//     // therefore `query!` has to wrap it in a single-arity tuple.
-//     //
-//     // where Term is #term,
-//     context { 1: Ligma } proves #term is_type Tau;
-// }
-
 #[derive(Debug)]
 pub struct Typechecker {
     machine: Machine<()>,
     heap: Heap,
     knowledge_base: KnowledgeBase,
-    handler: DebugHandler<KnowledgeBase>,
+    handler: NullHandler<KnowledgeBase>,
 }
 
 impl Typechecker {
@@ -94,16 +83,12 @@ impl Typechecker {
         let mut terms = IrTermGraph::new(symbols.clone());
         let modules = stlc(&mut terms);
         let knowledge_base = whisper::trans::knowledge_base(&terms, &modules);
-        println!(
-            "Compiled knowledge base:\n{}",
-            knowledge_base.root().display()
-        );
 
         let mut machine = Machine::new();
         machine.init(&knowledge_base);
 
         let heap = Heap::new(symbols);
-        let handler = DebugHandler::default();
+        let handler = NullHandler::default();
 
         Typechecker {
             machine,
@@ -130,8 +115,7 @@ impl Typechecker {
                 Kw::is_type,
                 Variable::<Type>::Free(1),
             ),))
-            .expect("fuck");
-        println!("hell yea {:?}", maybe_solution);
+            .ok()?;
         let ((_, _, _, _, _, tau),) = maybe_solution?;
 
         match tau {
