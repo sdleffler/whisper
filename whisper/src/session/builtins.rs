@@ -1,9 +1,13 @@
+use std::any::Any;
+
 use crate::{
     heap::Heap,
-    session::{Frame, GoalRef, ModuleCache, Resolver, Trail, Unfolded, UnificationStack},
+    session::{Frame, GoalIndex, ModuleCache, Resolver, Trail, Unfolded, UnificationStack},
     word::{Address, Tag},
     SymbolIndex,
 };
+
+pub mod hash_map;
 
 #[macro_export]
 macro_rules! unpack {
@@ -16,13 +20,40 @@ macro_rules! unpack {
 }
 
 pub struct BuiltinContext<'sesh, S, R: Resolver> {
+    pub state: &'sesh mut BuiltinState,
+    pub tail_frames: &'sesh mut [Frame<S>],
     pub heap: &'sesh mut Heap,
     pub modules: &'sesh mut ModuleCache,
     pub resolver: &'sesh R,
     pub unifier: &'sesh mut UnificationStack,
-    pub frame: &'sesh mut Frame<S>,
     pub trail: &'sesh mut Trail,
-    pub goal: GoalRef,
+    pub goal: GoalIndex,
+}
+
+#[derive(Debug)]
+pub enum BuiltinState {
+    Boxed(Box<dyn Any + Send + Sync>),
+    Uninit,
+}
+
+#[inline]
+pub fn builtin_cut<'sesh, S, R>(
+    ctx: &'sesh mut BuiltinContext<'sesh, S, R>,
+    _addr: Address,
+) -> Unfolded
+where
+    R: Resolver,
+{
+    let goal = &ctx.trail[ctx.goal];
+
+    if let Some(frame) = ctx.tail_frames.get_mut(goal.frame_index) {
+        frame.cut();
+    }
+
+    Unfolded::Succeed {
+        next: goal.next,
+        empty: true,
+    }
 }
 
 /// The `is` builtin unifies two terms. That's it. Nice and simple.
@@ -53,18 +84,6 @@ where
 }
 
 #[inline]
-pub fn builtin_cut<'sesh, S, R>(ctx: &'sesh mut BuiltinContext<'sesh, S, R>) -> Unfolded
-where
-    R: Resolver,
-{
-    ctx.frame.cut();
-    Unfolded::Succeed {
-        next: ctx.trail[ctx.goal].next,
-        empty: true,
-    }
-}
-
-#[inline]
 pub fn builtin_try_in<'sesh, S, R>(
     ctx: &'sesh mut BuiltinContext<'sesh, S, R>,
     addr: Address,
@@ -85,7 +104,12 @@ where
     // );
 
     Unfolded::Succeed {
-        next: Some(ctx.trail.cons(prev_next_goal, next_goal, next_module)),
+        next: Some(ctx.trail.cons(
+            prev_next_goal,
+            next_goal,
+            next_module,
+            ctx.tail_frames.len(),
+        )),
         empty: true,
     }
 }
@@ -108,7 +132,7 @@ where
         .get_value() as usize;
 
     match (arity, ctx.heap.symbols().index(first)) {
-        (1, SymbolIndex::CUT) => builtin_cut(ctx),
+        (1, SymbolIndex::CUT) => builtin_cut(ctx, goal_addr),
         (3, SymbolIndex::IS) => builtin_is(ctx, goal_addr),
         (3, SymbolIndex::LET) => todo!("evaluation for `let` goals not implemented yet"),
         (3, SymbolIndex::TRY) => builtin_try_in(ctx, goal_addr),

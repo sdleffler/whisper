@@ -9,7 +9,7 @@ use crate::{
 use ::{
     failure::Error,
     smallvec::SmallVec,
-    std::{collections::HashMap, fmt, marker::PhantomData, mem, ops::Index},
+    std::{any::Any, collections::HashMap, fmt, marker::PhantomData, mem, ops::Index},
     whisper_ir::{trans::TermEmitter, IrKnowledgeBase, IrTermGraph},
     whisper_schema::{SchemaArena, SchemaGraph},
 };
@@ -17,7 +17,7 @@ use ::{
 mod builtins;
 pub mod goal;
 
-use builtins::BuiltinContext;
+use builtins::{BuiltinContext, BuiltinState};
 pub use goal::Goal;
 
 /// A point in the trail which can be unwound to.
@@ -28,13 +28,14 @@ pub struct Point {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct GoalRef(usize);
+pub struct GoalIndex(usize);
 
 #[derive(Debug, Clone)]
 pub struct GoalNode {
-    pub next: Option<GoalRef>,
+    pub next: Option<GoalIndex>,
     pub address: Word,
     pub module: ModuleIndex,
+    pub frame_index: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -43,10 +44,10 @@ pub struct Trail {
     goals: SmallVec<[GoalNode; 64]>,
 }
 
-impl Index<GoalRef> for Trail {
+impl Index<GoalIndex> for Trail {
     type Output = GoalNode;
 
-    fn index(&self, idx: GoalRef) -> &Self::Output {
+    fn index(&self, idx: GoalIndex) -> &Self::Output {
         &self.goals[idx.0]
     }
 }
@@ -86,33 +87,44 @@ impl Trail {
     }
 
     #[inline]
-    pub fn cons(&mut self, next: Option<GoalRef>, address: Word, module: ModuleIndex) -> GoalRef {
+    pub fn cons(
+        &mut self,
+        next: Option<GoalIndex>,
+        address: Word,
+        module: ModuleIndex,
+        frame_index: usize,
+    ) -> GoalIndex {
         let id = self.goals.len();
         self.goals.push(GoalNode {
             next,
             address,
             module,
+            frame_index,
         });
-        GoalRef(id)
+        GoalIndex(id)
     }
 
     #[inline]
-    pub fn append<I>(&mut self, tail: Option<GoalRef>, goals: I) -> Option<GoalRef>
+    pub fn append<I>(
+        &mut self,
+        tail: Option<GoalIndex>,
+        frame_index: usize,
+        goals: I,
+    ) -> Option<GoalIndex>
     where
         I: IntoIterator<Item = (Word, ModuleIndex)>,
         I::IntoIter: DoubleEndedIterator,
     {
         goals.into_iter().rev().fold(tail, |acc, (addr, module)| {
-            Some(self.cons(acc, addr, module))
+            Some(self.cons(acc, addr, module, frame_index))
         })
     }
 }
 
-#[derive(Clone)]
 pub enum Remaining<S> {
     Matches(Matches),
     External(S),
-    Builtin,
+    Builtin(BuiltinState),
     Uninit,
     Empty,
 }
@@ -126,7 +138,6 @@ pub enum Remaining<S> {
 /// all assignments necessary to create the *parent* goal of a subgoal being
 /// constructed; if unification fails, we don't want to unwind the parent goal
 /// unless there are no other potential subgoals left to try.
-#[derive(Clone)]
 pub struct Frame<S> {
     /// The address of the goal that this frame is trying to prove.
     root_address: Address,
@@ -135,10 +146,15 @@ pub struct Frame<S> {
     /// variable assignments created when building this frame.
     trail_point: Point,
 
+    /// The top of the object stack at the time this frame was created,
+    /// so that when unwinding we can remove objects which are no longer
+    /// needed.
+    objects_top: usize,
+
     /// Possibly empty list of subgoals for the goal this frame is
-    /// trying to prove. [GoalRef] is a handle while the actual data
+    /// trying to prove. [GoalIndex] is a handle while the actual data
     /// is stored in [Trail].
-    goals: Option<GoalRef>,
+    goals: Option<GoalIndex>,
 
     /// Remaining alternatives to try for this goal.
     alts: Remaining<S>,
@@ -398,6 +414,7 @@ pub struct Machine<T: ExternFrame> {
     unifier: UnificationStack,
     frames: SmallVec<[Frame<T>; 8]>,
     trail: Trail,
+    objects: Vec<Box<dyn Any + Send + Sync>>,
     module_cache: ModuleCache,
 }
 
@@ -408,6 +425,7 @@ impl<T: ExternFrame> Default for Machine<T> {
             frames: SmallVec::new(),
             trail: Trail::new(),
             module_cache: ModuleCache::new(),
+            objects: Vec::new(),
         }
     }
 }
@@ -421,6 +439,7 @@ impl<T: ExternFrame> Machine<T> {
         self.unifier.clear();
         self.frames.clear();
         self.trail.clear();
+        self.objects.clear();
         self.module_cache.init(resolver);
     }
 }
@@ -476,6 +495,7 @@ pub struct Runtime<'all, H: ExternHandler> {
     unifier: &'all mut UnificationStack,
     frames: &'all mut SmallVec<[Frame<H::State>; 8]>,
     trail: &'all mut Trail,
+    objects: &'all mut Vec<Box<dyn Any + Send + Sync>>,
     module_cache: &'all mut ModuleCache,
     heap: &'all mut Heap,
     handler: &'all mut H,
@@ -493,6 +513,7 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
             unifier: &mut machine.unifier,
             frames: &mut machine.frames,
             trail: &mut machine.trail,
+            objects: &mut machine.objects,
             module_cache: &mut machine.module_cache,
             heap,
             handler,
@@ -510,6 +531,7 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
             unifier: &mut machine.unifier,
             frames: &mut machine.frames,
             trail: &mut machine.trail,
+            objects: &mut machine.objects,
             module_cache: &mut machine.module_cache,
             heap: &mut query.heap,
             handler,
@@ -530,14 +552,17 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
         self.trail.clear();
         self.frames.clear();
         self.unifier.clear();
+        self.objects.clear();
 
         if !goal_addrs.is_empty() {
             let module_idx = self.module_cache.root();
             self.frames.push(Frame {
                 root_address: 0,
                 trail_point: self.trail.get(),
+                objects_top: 0,
                 goals: self.trail.append(
                     None,
+                    0,
                     goal_addrs
                         .iter()
                         .copied()
@@ -579,8 +604,10 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
             self.frames.push(Frame {
                 root_address: 0,
                 trail_point: self.trail.get(),
+                objects_top: 0,
                 goals: self.trail.append(
                     None,
+                    0,
                     goal_addrs
                         .iter()
                         .copied()
@@ -605,7 +632,7 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
 
     pub fn resume(&mut self) -> Yield {
         // We proceed by a depth-first search over the proof space. Well, in fancy-speak.
-        'searching: while let Some(frame) = self.frames.last_mut() {
+        'searching: while let Some((frame, tail_frames)) = self.frames.split_last_mut() {
             println!("'searching");
 
             if let Some(goal) = frame.goals {
@@ -613,10 +640,12 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
                     next: next_goal,
                     address: goal_ref,
                     module: goal_module_idx,
+                    ..
                 } = self.trail[goal];
 
                 let undo_trail = self.trail.get();
                 let undo_addr = self.heap.len();
+                let undo_objects = self.objects.len();
 
                 let goal_module = &self.module_cache[goal_module_idx];
 
@@ -628,6 +657,7 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
                                 None => {
                                     self.trail.unwind(frame.trail_point, &mut self.heap);
                                     self.heap.words.truncate(frame.root_address);
+                                    self.objects.truncate(frame.objects_top);
                                     self.frames.pop();
                                     continue 'searching;
                                 }
@@ -654,6 +684,8 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
                                 // the next candidate.
                                 self.trail.unwind(undo_trail, &mut self.heap);
                                 self.heap.words.truncate(undo_addr);
+                                // No need to unwind the object stack here as this could not possibly
+                                // have created any.
 
                                 continue 'matching;
                             }
@@ -677,7 +709,11 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
 
                             println!("Success.");
 
-                            break 'matching self.trail.append(next_goal, relocated);
+                            break 'matching self.trail.append(
+                                next_goal,
+                                tail_frames.len(),
+                                relocated,
+                            );
                         }
                     }
                     Remaining::External(ref mut state) => {
@@ -704,16 +740,18 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
                             Unfolded::Fail => {
                                 self.trail.unwind(frame.trail_point, &mut self.heap);
                                 self.heap.words.truncate(frame.root_address);
+                                self.objects.truncate(frame.objects_top);
                                 self.frames.pop();
                                 continue 'searching;
                             }
                         }
                     }
-                    Remaining::Builtin => {
+                    Remaining::Builtin(ref mut state) => {
                         let unfolded = builtins::handle_goal(&mut BuiltinContext {
+                            state,
+                            tail_frames,
                             modules: &mut *self.module_cache,
                             resolver: &*self.resolver,
-                            frame,
                             heap: &mut *self.heap,
                             trail: &mut *self.trail,
                             unifier: &mut *self.unifier,
@@ -731,6 +769,7 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
                             Unfolded::Fail => {
                                 self.trail.unwind(frame.trail_point, &mut self.heap);
                                 self.heap.words.truncate(frame.root_address);
+                                self.objects.truncate(frame.objects_top);
                                 self.frames.pop();
                                 continue 'searching;
                             }
@@ -743,6 +782,7 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
                     Remaining::Empty => {
                         self.trail.unwind(frame.trail_point, &mut self.heap);
                         self.heap.words.truncate(frame.root_address);
+                        self.objects.truncate(frame.objects_top);
                         self.frames.pop();
                         continue 'searching;
                     }
@@ -773,7 +813,7 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
                             });
                             Remaining::External(init_state)
                         }
-                        Tag::OpaqueRef => Remaining::Builtin,
+                        Tag::OpaqueRef => Remaining::Builtin(BuiltinState::Uninit),
                         _ => unreachable!(
                             "Goals should only start with an `Arity`, `Extern`, or `Opaque` word!"
                         ),
@@ -786,6 +826,7 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
                         self.frames.push(Frame {
                             root_address: undo_addr,
                             trail_point: undo_trail,
+                            objects_top: undo_objects,
                             goals: remaining_goals,
                             alts,
                         });
@@ -995,6 +1036,7 @@ pub struct Session<T: ExternFrame> {
 
     unifier: UnificationStack,
     frames: SmallVec<[Frame<T>; 8]>,
+    objects: Vec<Box<dyn Any + Send + Sync>>,
     trail: Trail,
 
     query_vars: QueryMap,
@@ -1015,6 +1057,7 @@ impl<T: ExternFrame> Session<T> {
 
             unifier: UnificationStack::new(),
             frames: SmallVec::new(),
+            objects: Vec::new(),
             trail: Trail::new(),
 
             query_vars: QueryMap::new(),
@@ -1043,14 +1086,17 @@ impl<T: ExternFrame> Session<T> {
         self.trail.clear();
         self.frames.clear();
         self.unifier.clear();
+        self.objects.clear();
 
         if !query.goals.is_empty() {
             let module_idx = modules.root();
             self.frames.push(Frame {
                 root_address: 0,
                 trail_point: self.trail.get(),
+                objects_top: 0,
                 goals: self.trail.append(
                     None,
+                    0,
                     query
                         .goals
                         .iter()
@@ -1088,6 +1134,7 @@ impl<T: ExternFrame> Session<T> {
             unifier: &mut self.unifier,
             frames: &mut self.frames,
             trail: &mut self.trail,
+            objects: &mut self.objects,
             module_cache: modules,
             heap: &mut self.heap,
             handler,
@@ -1107,7 +1154,10 @@ impl Session<()> {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Unfolded {
-    Succeed { next: Option<GoalRef>, empty: bool },
+    Succeed {
+        next: Option<GoalIndex>,
+        empty: bool,
+    },
     Fail,
 }
 
@@ -1117,7 +1167,7 @@ pub struct ExternContext<'sesh, R: Resolver> {
     pub heap: &'sesh mut Heap,
     pub unifier: &'sesh mut UnificationStack,
     pub trail: &'sesh mut Trail,
-    pub goal: GoalRef,
+    pub goal: GoalIndex,
 }
 
 impl<'sesh, R: Resolver> ExternContext<'sesh, R> {
@@ -1157,7 +1207,7 @@ pub trait ExternHandler: Sized {
     ///
     /// ```
     /// # extern crate whisper;
-    /// # use whisper::{Heap, Address, session::{ExternHandler, Frame, Trail, GoalRef, Unfolded, ExternContext}};
+    /// # use whisper::{Heap, Address, session::{ExternHandler, Frame, Trail, GoalIndex, Unfolded, ExternContext}};
     /// # struct NoopHandler;
     /// # impl ExternHandler for NoopHandler {
     /// # type Context = ();
