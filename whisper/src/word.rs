@@ -30,10 +30,10 @@ impl WordOffset {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u64)]
 pub enum Tag {
-    /* 0b0000 */ UInt32 = 0,
-    /* 0b0001 */ Int32 = 1,
+    /* 0b0000 */ Number = 0,
+    /* 0b0001 */ Unused1 = 1,
     /* 0b0010 */ Const = 2,
-    /* 0b0011 */ Float32 = 3,
+    /* 0b0011 */ Unused3 = 3,
     /* 0b0100 */ StructArity = 4,
     /* 0b0101 */ ExternArity = 5,
     /* 0b0110 */ BinaryArity = 6,
@@ -52,10 +52,10 @@ impl Tag {
     pub const NUM_BITS: u32 = 4;
     pub const MASK_BITS: UWordBits = 0xf;
 
-    pub const UINT32: UWordBits = Tag::UInt32 as UWordBits;
-    pub const INT32: UWordBits = Tag::Int32 as UWordBits;
+    pub const NUMBER: UWordBits = Tag::Number as UWordBits;
+    pub const UNUSED1: UWordBits = Tag::Unused1 as UWordBits;
     pub const CONST: UWordBits = Tag::Const as UWordBits;
-    pub const FLOAT32: UWordBits = Tag::Float32 as UWordBits;
+    pub const UNUSED3: UWordBits = Tag::Unused3 as UWordBits;
     pub const STRUCT_ARITY: UWordBits = Tag::StructArity as UWordBits;
     pub const EXTERN_ARITY: UWordBits = Tag::ExternArity as UWordBits;
     pub const BINARY_ARITY: UWordBits = Tag::BinaryArity as UWordBits;
@@ -118,12 +118,12 @@ impl Word {
 
     #[inline]
     pub fn uint32(uint: u32) -> Word {
-        UnpackedWord::UInt32(uint).pack()
+        UnpackedWord::Number(UnpackedNumber::UInt32(uint)).pack()
     }
 
     #[inline]
     pub fn int32(int: i32) -> Word {
-        UnpackedWord::Int32(int).pack()
+        UnpackedWord::Number(UnpackedNumber::Int32(int)).pack()
     }
 
     #[inline]
@@ -133,7 +133,7 @@ impl Word {
 
     #[inline]
     pub fn float32(f: f32) -> Word {
-        UnpackedWord::Float32(f).pack()
+        UnpackedWord::Number(UnpackedNumber::Float32(f)).pack()
     }
 
     #[inline]
@@ -201,10 +201,10 @@ impl Word {
         use self::UnpackedWord::*;
         let v = self.0 >> Tag::NUM_BITS;
         match self.0 & Tag::MASK_BITS {
-            Tag::UINT32 => UInt32(v as u32),
-            Tag::INT32 => Int32(v as i32),
+            Tag::NUMBER => Number(UnpackedNumber::from_bits(v)),
+            Tag::UNUSED1 => Unused1(v as usize),
             Tag::CONST => Const(v as usize),
-            Tag::FLOAT32 => Float32(f32::from_bits(v as u32)),
+            Tag::UNUSED3 => Unused3(v as usize),
             Tag::STRUCT_ARITY => StructArity(v as usize),
             Tag::EXTERN_ARITY => ExternArity(v as usize),
             Tag::BINARY_ARITY => BinaryArity(v as usize),
@@ -247,10 +247,10 @@ impl Word {
     #[inline]
     pub fn is_direct(&self) -> bool {
         match self.get_tag() {
-            Tag::UInt32
-            | Tag::Int32
+            Tag::Number
+            | Tag::Unused1
             | Tag::Const
-            | Tag::Float32
+            | Tag::Unused3
             | Tag::StructArity
             | Tag::ExternArity
             | Tag::BinaryArity
@@ -314,7 +314,7 @@ impl Word {
             heap[self.get_address()]
         } else if self.is_indirect() {
             self.with_address(0)
-        } else if self.get_tag() == Tag::Float32 {
+        } else if self.get_tag() == Tag::Unused3 {
             let float = f32::from_bits(self.get_value() as u32);
             self.with_value(float.round().to_bits() as UWordBits)
         } else {
@@ -334,10 +334,10 @@ impl Word {
     #[inline]
     pub fn get_tag(&self) -> Tag {
         match self.0 & Tag::MASK_BITS {
-            Tag::UINT32 => Tag::UInt32,
-            Tag::INT32 => Tag::Int32,
+            Tag::NUMBER => Tag::Number,
+            Tag::UNUSED1 => Tag::Unused1,
             Tag::CONST => Tag::Const,
-            Tag::FLOAT32 => Tag::Float32,
+            Tag::UNUSED3 => Tag::Unused3,
             Tag::STRUCT_ARITY => Tag::StructArity,
             Tag::EXTERN_ARITY => Tag::ExternArity,
             Tag::BINARY_ARITY => Tag::BinaryArity,
@@ -395,11 +395,59 @@ impl From<UnpackedWord> for Word {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum UnpackedWord {
+pub enum UnpackedNumber {
     UInt32(u32),
     Int32(i32),
-    Const(usize),
     Float32(f32),
+}
+
+impl fmt::Display for UnpackedNumber {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use UnpackedNumber::*;
+        match self {
+            UInt32(u) => u.fmt(f),
+            Int32(i) => i.fmt(f),
+            Float32(fl) => fl.fmt(f),
+        }
+    }
+}
+
+impl UnpackedNumber {
+    const UINT32_TAG: UWordBits = 0;
+    const INT32_TAG: UWordBits = 1;
+    const FLOAT32_TAG: UWordBits = 2;
+    const TAG_MASK: UWordBits = 0b11;
+
+    const SHIFT_32: u32 = 32 - Tag::NUM_BITS;
+
+    #[inline]
+    fn to_bits(self) -> UWordBits {
+        use UnpackedNumber::*;
+        match self {
+            UInt32(u) => ((u as UWordBits) << Self::SHIFT_32) | Self::UINT32_TAG,
+            Int32(i) => ((i as UWordBits) << Self::SHIFT_32) | Self::INT32_TAG,
+            Float32(f) => ((f.to_bits() as UWordBits) << Self::SHIFT_32) | Self::FLOAT32_TAG,
+        }
+    }
+
+    #[inline]
+    fn from_bits(bits: UWordBits) -> UnpackedNumber {
+        use UnpackedNumber::*;
+        match (bits & Self::TAG_MASK) >> Tag::NUM_BITS {
+            Self::UINT32_TAG => UInt32((bits >> Self::SHIFT_32) as u32),
+            Self::INT32_TAG => Int32((bits >> Self::SHIFT_32) as i32),
+            Self::FLOAT32_TAG => Float32(f32::from_bits((bits >> Self::SHIFT_32) as u32)),
+            _ => panic!("bad number tag"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum UnpackedWord {
+    Number(UnpackedNumber),
+    Unused1(usize),
+    Const(usize),
+    Unused3(usize),
     StructArity(usize),
     ExternArity(usize),
     BinaryArity(usize),
@@ -416,16 +464,13 @@ pub enum UnpackedWord {
 
 impl UnpackedWord {
     #[inline]
-    fn get_val(self) -> UWordBits {
+    fn to_bits(self) -> UWordBits {
         use self::UnpackedWord::*;
         let bits = match self {
-            UInt32(uint) => uint as UWordBits,
-            Int32(int) => int as UWordBits,
-            Float32(f) => f.to_bits() as UWordBits,
+            Number(number) => number.to_bits(),
 
-            Const(n) | StructArity(n) | ExternArity(n) | BinaryArity(n) | OpaqueArity(n) => {
-                n as UWordBits
-            }
+            Unused1(n) | Const(n) | Unused3(n) | StructArity(n) | ExternArity(n)
+            | BinaryArity(n) | OpaqueArity(n) => n as UWordBits,
 
             Var(a) | Tagged(a) | Cons(a) | Cons2(a) | StructRef(a) | ExternRef(a)
             | BinaryRef(a) | OpaqueRef(a) => a as UWordBits,
@@ -437,10 +482,10 @@ impl UnpackedWord {
     fn get_tag(self) -> UWordBits {
         use self::UnpackedWord::*;
         let tag = match self {
-            UInt32(_) => Tag::UInt32,
-            Int32(_) => Tag::Int32,
+            Number(_) => Tag::Number,
+            Unused1(_) => Tag::Unused1,
             Const(_) => Tag::Const,
-            Float32(_) => Tag::Float32,
+            Unused3(_) => Tag::Unused3,
             StructArity(_) => Tag::StructArity,
             ExternArity(_) => Tag::ExternArity,
             BinaryArity(_) => Tag::BinaryArity,
@@ -460,7 +505,7 @@ impl UnpackedWord {
     #[inline]
     pub fn pack(&self) -> Word {
         let tag = self.get_tag();
-        let val = self.get_val();
+        let val = self.to_bits();
         Word(val | tag)
     }
 }

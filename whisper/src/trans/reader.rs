@@ -9,7 +9,7 @@ use whisper_ir::{
 
 use crate::{
     heap::Heap,
-    word::{Address, Tag, UnpackedWord, Word},
+    word::{Address, Tag, UnpackedNumber, UnpackedWord, Word},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -146,14 +146,17 @@ impl<'heap> TermReader<'heap> for HeapReader<'heap> {
 
         use UnpackedWord::*;
         match self.heap.chase(*h).unpack() {
-            UInt32(u) => Some(v.visit_u32(u)),
-            Int32(i) => Some(v.visit_i32(i)),
+            Number(n) => match n {
+                UnpackedNumber::UInt32(u) => Some(v.visit_u32(u)),
+                UnpackedNumber::Int32(i) => Some(v.visit_i32(i)),
+                UnpackedNumber::Float32(f) => Some(v.visit_f32(f)),
+            },
+            Unused1(_) | Unused3(_) => unimplemented!("UNUSED"),
             Const(index) => {
                 let symbols = self.heap.symbols();
                 let localized = symbols.index(index);
                 Some(v.visit_const(symbols, localized.into()))
             }
-            Float32(f) => Some(v.visit_f32(f)),
             StructArity(n) => Some(v.visit_compound(
                 self.heap.symbols(),
                 CompoundKind::Struct(n),

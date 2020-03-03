@@ -138,10 +138,10 @@ impl<'heap> fmt::Display for DisplayHeap<'heap> {
                 use UnpackedWord::*;
                 " ".fmt(f)?;
                 match word.unpack() {
-                    UInt32(uint) => write!(f, "UInt:{:04x}", uint)?,
-                    Int32(int) => write!(f, "Int: {:04x}", int)?,
+                    Number(uint) => write!(f, "Num: {:04}", uint)?,
+                    Unused1(v) => write!(f, "Unu1:{:04x}", v)?,
                     Const(c) => write!(f, "Cnst:{:04x}", c)?,
-                    Float32(n) => write!(f, "Fl32:{:04x}", n as u16)?,
+                    Unused3(v) => write!(f, "Unu3:{:04x}", v)?,
                     StructArity(a) => write!(f, "StAr:{:04x}", a)?,
                     ExternArity(a) => write!(f, "ExAr:{:04x}", a)?,
                     BinaryArity(a) => write!(f, "BiAr:{:04x}", a)?,
@@ -184,14 +184,14 @@ impl<'heap> fmt::Display for DisplayAt<'heap> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::UnpackedWord::*;
         match self.heap.chase(self.heap.words[self.addr]).unpack() {
-            UInt32(i) => i.fmt(f),
-            Int32(i) => i.fmt(f),
-            Float32(v) => v.fmt(f),
+            Number(n) => n.fmt(f),
+            Unused1(v) => write!(f, "Unused1({:x})", v),
             Const(c) => {
                 let symbols = self.heap.symbols();
                 let indexed = symbols.index(c);
                 write!(f, "\"{}\"", symbols.read().display(indexed))
             }
+            Unused3(v) => write!(f, "Unused3({:x})", v),
             StructArity(arity) => {
                 let display = self.heap.words[self.addr + 1..][..arity]
                     .iter()
@@ -253,14 +253,14 @@ impl<'heap> fmt::Display for DisplayWord<'heap> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::UnpackedWord::*;
         match self.word.unpack() {
-            UInt32(i) => i.fmt(f),
-            Int32(i) => i.fmt(f),
-            Float32(v) => v.fmt(f),
+            Number(n) => n.fmt(f),
+            Unused1(v) => write!(f, "Unu1({})", v),
             Const(c) => {
                 let symbols = self.heap.symbols();
                 let indexed = symbols.index(c);
                 write!(f, "\"{}\"", symbols.read().display(indexed))
             }
+            Unused3(v) => write!(f, "Unu3({})", v),
             StructArity(arity) => write!(f, "StrA({})", arity),
             ExternArity(arity) => write!(f, "ExtA({})", arity),
             BinaryArity(arity) => write!(f, "BinA({})", arity),
