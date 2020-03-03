@@ -72,16 +72,29 @@ fn query_foo() {
 
     let mut module_cache = ModuleCache::new();
     module_cache.init(&validator_kb);
-    session.load_with_extern_state_and_reuse_query(&mut query, &module_cache, ());
+    session.load_and_reuse_query(&mut query, &module_cache);
 
     assert!(session.resume(&mut module_cache, &validator_kb));
-    artifact.insert_display(
-        "session query",
-        &session.query_vars().iter().format_with(", ", |(k, v), f| {
+    let displayable = session
+        .query_vars()
+        .iter()
+        .format_with(", ", |(k, v), f| {
             f(&format_args!("{} => {}", k, session.heap().display_at(*v)))
-        }),
-    );
-    assert!(!session.resume(&mut module_cache, &validator_kb));
+        })
+        .to_string();
+    artifact.insert_display("session query", &displayable);
+    println!("Solution: {}", displayable);
+
+    if session.resume(&mut module_cache, &validator_kb) {
+        let displayable = session
+            .query_vars()
+            .iter()
+            .format_with(", ", |(k, v), f| {
+                f(&format_args!("{} => {}", k, session.heap().display_at(*v)))
+            })
+            .to_string();
+        panic!("(unexpected) solution: {}", displayable);
+    }
 
     query.clear();
     let mut builder = QueryBuilder::from(&mut query);
@@ -90,7 +103,7 @@ fn query_foo() {
     builder.push(&terms, &ir_query);
     builder.finish();
 
-    session.load_with_extern_state_and_reuse_query(&mut query, &module_cache, ());
+    session.load_and_reuse_query(&mut query, &module_cache);
     assert!(!session.resume(&mut module_cache, &validator_kb));
 
     egress.close_and_assert_unregressed().unwrap();

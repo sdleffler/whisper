@@ -1,8 +1,6 @@
 use crate::{
     heap::Heap,
-    session::{
-        ExternHandler, Frame, GoalRef, ModuleCache, Resolver, Trail, Unfolded, UnificationStack,
-    },
+    session::{Frame, GoalRef, ModuleCache, Resolver, Trail, Unfolded, UnificationStack},
     word::{Address, Tag},
     SymbolIndex,
 };
@@ -17,26 +15,23 @@ macro_rules! unpack {
     };
 }
 
-pub struct BuiltinContext<'sesh, H: ExternHandler, R: Resolver> {
+pub struct BuiltinContext<'sesh, S, R: Resolver> {
     pub heap: &'sesh mut Heap,
-    pub extern_handler: &'sesh mut H,
-    pub extern_state: &'sesh mut H::State,
     pub modules: &'sesh mut ModuleCache,
     pub resolver: &'sesh R,
     pub unifier: &'sesh mut UnificationStack,
-    pub frame: &'sesh mut Frame<H::State>,
+    pub frame: &'sesh mut Frame<S>,
     pub trail: &'sesh mut Trail,
     pub goal: GoalRef,
 }
 
 /// The `is` builtin unifies two terms. That's it. Nice and simple.
 #[inline]
-pub fn builtin_is<'sesh, H, R>(
-    ctx: &'sesh mut BuiltinContext<'sesh, H, R>,
+pub fn builtin_is<'sesh, S, R>(
+    ctx: &'sesh mut BuiltinContext<'sesh, S, R>,
     addr: Address,
 ) -> Unfolded
 where
-    H: ExternHandler,
     R: Resolver,
 {
     ctx.unifier.init(ctx.heap[addr + 2], ctx.heap[addr + 3]);
@@ -47,36 +42,34 @@ where
     //     ctx.heap.display_at(addr + 3)
     // );
 
-    if !ctx.unifier.unify(
-        ctx.extern_handler,
-        ctx.extern_state,
-        ctx.heap,
-        ctx.trail,
-        ctx.heap.len(),
-    ) {
+    if !ctx.unifier.unify(ctx.heap, ctx.trail, ctx.heap.len()) {
         Unfolded::Fail
     } else {
-        Unfolded::Succeed(ctx.trail[ctx.goal].next)
+        Unfolded::Succeed {
+            next: ctx.trail[ctx.goal].next,
+            empty: true,
+        }
     }
 }
 
 #[inline]
-pub fn builtin_cut<'sesh, H, R>(ctx: &'sesh mut BuiltinContext<'sesh, H, R>) -> Unfolded
+pub fn builtin_cut<'sesh, S, R>(ctx: &'sesh mut BuiltinContext<'sesh, S, R>) -> Unfolded
 where
-    H: ExternHandler,
     R: Resolver,
 {
     ctx.frame.cut();
-    Unfolded::Succeed(ctx.trail[ctx.goal].next)
+    Unfolded::Succeed {
+        next: ctx.trail[ctx.goal].next,
+        empty: true,
+    }
 }
 
 #[inline]
-pub fn builtin_try_in<'sesh, H, R>(
-    ctx: &'sesh mut BuiltinContext<'sesh, H, R>,
+pub fn builtin_try_in<'sesh, S, R>(
+    ctx: &'sesh mut BuiltinContext<'sesh, S, R>,
     addr: Address,
 ) -> Unfolded
 where
-    H: ExternHandler,
     R: Resolver,
 {
     let prev_next_goal = ctx.trail[ctx.goal].next;
@@ -91,12 +84,14 @@ where
     //     ctx.heap.symbols.normalize_full(next_module.get_name()),
     // );
 
-    Unfolded::Succeed(Some(ctx.trail.cons(prev_next_goal, next_goal, next_module)))
+    Unfolded::Succeed {
+        next: Some(ctx.trail.cons(prev_next_goal, next_goal, next_module)),
+        empty: true,
+    }
 }
 
-pub fn handle_goal<'sesh, H, R>(ctx: &'sesh mut BuiltinContext<'sesh, H, R>) -> Unfolded
+pub fn handle_goal<'sesh, S, R>(ctx: &'sesh mut BuiltinContext<'sesh, S, R>) -> Unfolded
 where
-    H: ExternHandler,
     R: Resolver,
 {
     let goal_addr = ctx.trail[ctx.goal]

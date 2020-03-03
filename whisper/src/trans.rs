@@ -1,12 +1,11 @@
 use smallvec::SmallVec;
 
-use whisper_ir::{
-    graph::{IrGoal, IrKnowledgeBase, IrModule, IrModuleEntry, IrQuery, IrTermGraph},
-    trans::TermEmitter,
-};
+use whisper_ir::graph::{IrGoal, IrKnowledgeBase, IrModule, IrModuleEntry, IrQuery, IrTermGraph};
 
 pub mod reader;
 pub mod writer;
+
+pub use whisper_ir::trans::TermEmitter;
 
 pub use reader::HeapReader;
 pub use writer::HeapWriter;

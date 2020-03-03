@@ -81,7 +81,10 @@ pub mod prelude {
 }
 
 pub mod schema {
-    pub use whisper_schema::serde::{de, ser, Error};
+    pub use whisper_schema::{
+        serde::{de, ser, Error},
+        SchemaArena, SchemaGraph, SchemaNode,
+    };
 }
 
 #[macro_export]

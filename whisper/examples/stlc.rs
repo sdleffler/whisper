@@ -105,11 +105,8 @@ impl Typechecker {
         builder.push(&self.terms, &ir_query);
         builder.finish();
 
-        self.session.load_with_extern_state_and_reuse_query(
-            &mut self.query,
-            &self.module_cache,
-            (),
-        );
+        self.session
+            .load_and_reuse_query(&mut self.query, &self.module_cache);
 
         if self
             .session
