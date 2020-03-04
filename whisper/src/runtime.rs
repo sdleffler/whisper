@@ -7,22 +7,26 @@ use crate::{
 };
 
 use ::{
-    failure::Error,
+    failure::{Error, Fail},
     smallvec::SmallVec,
-    std::{any::Any, collections::HashMap, fmt, marker::PhantomData, mem, ops::Index},
+    std::{collections::HashMap, fmt, marker::PhantomData, mem, ops::Index},
     whisper_ir::{trans::TermEmitter, IrKnowledgeBase, IrTermGraph},
     whisper_schema::{SchemaArena, SchemaGraph},
 };
 
 mod builtins;
 pub mod goal;
+pub mod object;
+pub mod resolver;
 
 use builtins::{BuiltinContext, BuiltinState};
 pub use goal::Goal;
+pub use object::{ObjectIndex, ObjectPoint, ObjectStack};
+pub use resolver::{Resolved, Resolver};
 
 /// A point in the trail which can be unwound to.
 #[derive(Debug, Clone, Copy)]
-pub struct Point {
+pub struct TrailPoint {
     goal: usize,
     trail: usize,
 }
@@ -30,11 +34,18 @@ pub struct Point {
 #[derive(Debug, Clone, Copy)]
 pub struct GoalIndex(usize);
 
+#[derive(Debug, Clone, Copy)]
+pub enum GoalType {
+    Dynamic(ModuleIndex),
+    Extern(ExternIndex),
+    Builtin,
+}
+
 #[derive(Debug, Clone)]
 pub struct GoalNode {
     pub next: Option<GoalIndex>,
     pub address: Word,
-    pub module: ModuleIndex,
+    pub ty: GoalType,
     pub frame_index: usize,
 }
 
@@ -63,8 +74,8 @@ impl Trail {
     }
 
     #[inline(always)]
-    pub fn get(&self) -> Point {
-        Point {
+    pub fn get(&self) -> TrailPoint {
+        TrailPoint {
             trail: self.trail.len(),
             goal: self.goals.len(),
         }
@@ -76,7 +87,7 @@ impl Trail {
     }
 
     #[inline]
-    pub fn unwind(&mut self, point: Point, heap: &mut Heap) {
+    pub fn unwind(&mut self, point: TrailPoint, heap: &mut Heap) {
         if point.trail < self.trail.len() {
             for var in self.trail.drain(point.trail..) {
                 heap[var.get_address()] = var;
@@ -91,14 +102,14 @@ impl Trail {
         &mut self,
         next: Option<GoalIndex>,
         address: Word,
-        module: ModuleIndex,
+        ty: GoalType,
         frame_index: usize,
     ) -> GoalIndex {
         let id = self.goals.len();
         self.goals.push(GoalNode {
             next,
             address,
-            module,
+            ty,
             frame_index,
         });
         GoalIndex(id)
@@ -112,11 +123,11 @@ impl Trail {
         goals: I,
     ) -> Option<GoalIndex>
     where
-        I: IntoIterator<Item = (Word, ModuleIndex)>,
+        I: IntoIterator<Item = (Word, GoalType)>,
         I::IntoIter: DoubleEndedIterator,
     {
-        goals.into_iter().rev().fold(tail, |acc, (addr, module)| {
-            Some(self.cons(acc, addr, module, frame_index))
+        goals.into_iter().rev().fold(tail, |acc, (addr, ty)| {
+            Some(self.cons(acc, addr, ty, frame_index))
         })
     }
 }
@@ -124,6 +135,14 @@ impl Trail {
 pub enum Remaining<S> {
     Matches(Matches),
     External(S),
+    Builtin(BuiltinState),
+    Uninit,
+    Empty,
+}
+
+pub enum FrameState<S> {
+    Dynamic(ModuleIndex, Matches),
+    Extern(ExternIndex, S),
     Builtin(BuiltinState),
     Uninit,
     Empty,
@@ -144,20 +163,21 @@ pub struct Frame<S> {
 
     /// The trail point containing the necessary information to undo
     /// variable assignments created when building this frame.
-    trail_point: Point,
+    trail_point: TrailPoint,
 
     /// The top of the object stack at the time this frame was created,
     /// so that when unwinding we can remove objects which are no longer
     /// needed.
-    objects_top: usize,
+    objects_top: ObjectPoint,
 
     /// Possibly empty list of subgoals for the goal this frame is
     /// trying to prove. [GoalIndex] is a handle while the actual data
     /// is stored in [Trail].
     goals: Option<GoalIndex>,
 
-    /// Remaining alternatives to try for this goal.
-    alts: Remaining<S>,
+    /// The current state of this frame, which varies in type depending
+    /// on what kind of goal is being solved.
+    state: FrameState<S>,
 }
 
 impl<S> fmt::Debug for Frame<S> {
@@ -166,7 +186,7 @@ impl<S> fmt::Debug for Frame<S> {
             .field("root_address", &self.root_address)
             .field("trail_point", &self.trail_point)
             .field("goals", &self.goals)
-            .field("alts", &"Remaining")
+            .field("state", &"FrameState")
             .finish()
     }
 }
@@ -182,7 +202,7 @@ impl<S> Frame<S> {
     /// basically a Prolog cut.
     #[inline]
     pub fn cut(&mut self) {
-        self.alts = Remaining::Empty;
+        self.state = FrameState::Empty;
     }
 }
 
@@ -329,40 +349,26 @@ impl Yield {
     }
 }
 
-pub trait Resolver: Send + Sync {
-    fn symbols(&self) -> &SymbolTable;
-    fn resolve(&self, idx: Word, heap: &Heap) -> Option<Module>;
-    fn root(&self) -> Module;
-}
-
-impl Resolver for KnowledgeBase {
-    fn symbols(&self) -> &SymbolTable {
-        self.symbols()
-    }
-
-    fn resolve(&self, idx: Word, heap: &Heap) -> Option<Module> {
-        self.get(SymbolIndex(
-            idx.debug_assert_tag(Tag::Const).get_value() as usize,
-            heap.symbols().id(),
-        ))
-        .cloned()
-    }
-
-    fn root(&self) -> Module {
-        self.root().clone()
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ModuleIndex(usize);
 
-#[derive(Debug, Clone, Default)]
-pub struct ModuleCache {
-    module_table: HashMap<Word, ModuleIndex>,
-    modules: Vec<Module>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExternIndex(usize);
+
+#[derive(Debug, Clone, Copy)]
+pub enum CacheIndex {
+    Dynamic(ModuleIndex),
+    Extern(ExternIndex),
 }
 
-impl Index<ModuleIndex> for ModuleCache {
+#[derive(Debug, Clone, Default)]
+pub struct ModuleCache<E: ExternModule> {
+    table: HashMap<Word, CacheIndex>,
+    modules: Vec<Module>,
+    externs: Vec<E>,
+}
+
+impl<E: ExternModule> Index<ModuleIndex> for ModuleCache<E> {
     type Output = Module;
 
     fn index(&self, idx: ModuleIndex) -> &Module {
@@ -370,37 +376,56 @@ impl Index<ModuleIndex> for ModuleCache {
     }
 }
 
-impl ModuleCache {
+impl<E: ExternModule> Index<ExternIndex> for ModuleCache<E> {
+    type Output = E;
+
+    fn index(&self, idx: ExternIndex) -> &E {
+        &self.externs[idx.0]
+    }
+}
+
+impl<E: ExternModule> ModuleCache<E> {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            table: HashMap::new(),
+            modules: Vec::new(),
+            externs: Vec::new(),
+        }
     }
 
-    pub fn init(&mut self, resolver: &impl Resolver) {
-        self.module_table.clear();
+    pub fn init(&mut self, resolver: &impl Resolver<E>) {
+        self.table.clear();
         self.modules.clear();
-        let root = resolver.root();
-        self.insert(Word::r#const(root.name().0), root);
+        let (name, root) = resolver.root();
+        self.insert(name, root);
     }
 
-    fn insert(&mut self, scope: Word, module: Module) -> ModuleIndex {
-        let midx = ModuleIndex(self.modules.len());
-        self.modules.push(module);
-        self.module_table.insert(scope, midx);
-        midx
+    fn insert(&mut self, name: Word, module: Resolved<E>) -> CacheIndex {
+        match module {
+            Resolved::Dynamic(module) => {
+                let midx = CacheIndex::Dynamic(ModuleIndex(self.modules.len()));
+                self.modules.push(module);
+                self.table.insert(name, midx);
+                midx
+            }
+            Resolved::Extern(ext) => {
+                let eidx = CacheIndex::Extern(ExternIndex(self.externs.len()));
+                self.externs.push(ext);
+                self.table.insert(name, eidx);
+                eidx
+            }
+        }
     }
 
     pub fn get_or_insert(
         &mut self,
-        scope: Word,
+        name: Word,
         heap: &Heap,
-        resolver: &impl Resolver,
-    ) -> ModuleIndex {
-        match self.module_table.get(&scope).copied() {
+        resolver: &impl Resolver<E>,
+    ) -> CacheIndex {
+        match self.table.get(&name).copied() {
             Some(midx) => midx,
-            None => {
-                let module = resolver.resolve(scope, heap).unwrap();
-                self.insert(scope, module)
-            }
+            None => self.insert(name, resolver.resolve(name, heap).expect("todo")),
         }
     }
 
@@ -410,32 +435,32 @@ impl ModuleCache {
 }
 
 #[derive(Debug)]
-pub struct Machine<T: ExternFrame> {
+pub struct Machine<E: ExternModule> {
     unifier: UnificationStack,
-    frames: SmallVec<[Frame<T>; 8]>,
+    frames: SmallVec<[Frame<E::State>; 8]>,
     trail: Trail,
-    objects: Vec<Box<dyn Any + Send + Sync>>,
-    module_cache: ModuleCache,
+    objects: ObjectStack,
+    module_cache: ModuleCache<E>,
 }
 
-impl<T: ExternFrame> Default for Machine<T> {
+impl<E: ExternModule> Default for Machine<E> {
     fn default() -> Self {
         Self {
             unifier: UnificationStack::new(),
             frames: SmallVec::new(),
             trail: Trail::new(),
             module_cache: ModuleCache::new(),
-            objects: Vec::new(),
+            objects: ObjectStack::new(),
         }
     }
 }
 
-impl<T: ExternFrame> Machine<T> {
+impl<E: ExternModule> Machine<E> {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn init(&mut self, resolver: &impl Resolver) {
+    pub fn init(&mut self, resolver: &impl Resolver<E>) {
         self.unifier.clear();
         self.frames.clear();
         self.trail.clear();
@@ -444,25 +469,22 @@ impl<T: ExternFrame> Machine<T> {
     }
 }
 
-#[derive(Debug)]
-pub struct SimpleSession<H>
+pub struct SimpleSession<E>
 where
-    H: ExternHandler<Resolver = KnowledgeBase>,
+    E: ExternModule,
 {
-    pub machine: Machine<H::State>,
+    pub machine: Machine<E>,
     pub heap: Heap,
-    pub knowledge_base: KnowledgeBase,
-    pub handler: H,
+    pub knowledge_base: KnowledgeBase<E>,
 }
 
-impl<H> SimpleSession<H>
+impl<E> SimpleSession<E>
 where
-    H: ExternHandler<Resolver = KnowledgeBase>,
+    E: ExternModule,
 {
     pub fn new<F>(symbols: SymbolTable, kb: F) -> Self
     where
         F: FnOnce(&mut IrTermGraph) -> IrKnowledgeBase,
-        H: Default,
     {
         let mut terms = IrTermGraph::new(symbols);
         let modules = kb(&mut terms);
@@ -470,45 +492,32 @@ where
         let mut machine = Machine::new();
         machine.init(&knowledge_base);
         let heap = Heap::new(knowledge_base.symbols().clone());
-        let handler = H::default();
 
         Self {
             machine,
             heap,
             knowledge_base,
-            handler,
         }
     }
 
-    pub fn run(&mut self) -> Runtime<H> {
-        Runtime::new(
-            &mut self.machine,
-            &mut self.heap,
-            &mut self.handler,
-            &self.knowledge_base,
-        )
+    pub fn run(&mut self) -> Runtime<E, KnowledgeBase<E>> {
+        Runtime::new(&mut self.machine, &mut self.heap, &self.knowledge_base)
     }
 }
 
 #[derive(Debug)]
-pub struct Runtime<'all, H: ExternHandler> {
+pub struct Runtime<'all, E: ExternModule, R: Resolver<E>> {
     unifier: &'all mut UnificationStack,
-    frames: &'all mut SmallVec<[Frame<H::State>; 8]>,
+    frames: &'all mut SmallVec<[Frame<E::State>; 8]>,
     trail: &'all mut Trail,
-    objects: &'all mut Vec<Box<dyn Any + Send + Sync>>,
-    module_cache: &'all mut ModuleCache,
+    objects: &'all mut ObjectStack,
+    module_cache: &'all mut ModuleCache<E>,
     heap: &'all mut Heap,
-    handler: &'all mut H,
-    resolver: &'all H::Resolver,
+    resolver: &'all R,
 }
 
-impl<'all, H: ExternHandler> Runtime<'all, H> {
-    pub fn new(
-        machine: &'all mut Machine<H::State>,
-        heap: &'all mut Heap,
-        handler: &'all mut H,
-        resolver: &'all H::Resolver,
-    ) -> Self {
+impl<'all, E: ExternModule, R: Resolver<E>> Runtime<'all, E, R> {
+    pub fn new(machine: &'all mut Machine<E>, heap: &'all mut Heap, resolver: &'all R) -> Self {
         Self {
             unifier: &mut machine.unifier,
             frames: &mut machine.frames,
@@ -516,15 +525,13 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
             objects: &mut machine.objects,
             module_cache: &mut machine.module_cache,
             heap,
-            handler,
             resolver,
         }
     }
 
     pub fn from_query(
-        machine: &'all mut Machine<H::State>,
-        handler: &'all mut H,
-        resolver: &'all H::Resolver,
+        machine: &'all mut Machine<E>,
+        resolver: &'all R,
         query: &'all mut Query,
     ) -> Self {
         Self {
@@ -534,7 +541,6 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
             objects: &mut machine.objects,
             module_cache: &mut machine.module_cache,
             heap: &mut query.heap,
-            handler,
             resolver,
         }
     }
@@ -559,16 +565,16 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
             self.frames.push(Frame {
                 root_address: 0,
                 trail_point: self.trail.get(),
-                objects_top: 0,
+                objects_top: ObjectPoint::NULL,
                 goals: self.trail.append(
                     None,
                     0,
                     goal_addrs
                         .iter()
                         .copied()
-                        .map(|goal_addr| (goal_addr, module_idx)),
+                        .map(|goal_addr| (goal_addr, GoalType::Dynamic(module_idx))),
                 ),
-                alts: Remaining::Uninit,
+                state: FrameState::Uninit,
             });
         }
 
@@ -604,16 +610,16 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
             self.frames.push(Frame {
                 root_address: 0,
                 trail_point: self.trail.get(),
-                objects_top: 0,
+                objects_top: ObjectPoint::NULL,
                 goals: self.trail.append(
                     None,
                     0,
                     goal_addrs
                         .iter()
                         .copied()
-                        .map(|goal_addr| (goal_addr, module_idx)),
+                        .map(|goal_addr| (goal_addr, GoalType::Dynamic(module_idx))),
                 ),
-                alts: Remaining::Uninit,
+                state: FrameState::Uninit,
             });
         }
 
@@ -633,46 +639,45 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
     pub fn resume(&mut self) -> Yield {
         // We proceed by a depth-first search over the proof space. Well, in fancy-speak.
         'searching: while let Some((frame, tail_frames)) = self.frames.split_last_mut() {
-            println!("'searching");
+            // println!("'searching");
 
             if let Some(goal) = frame.goals {
                 let GoalNode {
                     next: next_goal,
                     address: goal_ref,
-                    module: goal_module_idx,
                     ..
                 } = self.trail[goal];
 
                 let undo_trail = self.trail.get();
                 let undo_addr = self.heap.len();
-                let undo_objects = self.objects.len();
+                let undo_objects = self.objects.top();
 
-                let goal_module = &self.module_cache[goal_module_idx];
-
-                let remaining_goals = match frame.alts {
-                    Remaining::Matches(ref mut matches) => {
+                let remaining_goals = match frame.state {
+                    FrameState::Dynamic(module_idx, ref mut matches) => {
                         'matching: loop {
                             let relation_id = match matches.next() {
                                 Some(it) => it,
                                 None => {
                                     self.trail.unwind(frame.trail_point, &mut self.heap);
                                     self.heap.words.truncate(frame.root_address);
-                                    self.objects.truncate(frame.objects_top);
+                                    self.objects.unwind(frame.objects_top);
                                     self.frames.pop();
                                     continue 'searching;
                                 }
                             };
 
+                            let goal_module = &self.module_cache[module_idx];
+
                             let relation = &goal_module[relation_id];
                             let head_ref = self.heap.copy_relation_head(goal_module, &relation);
                             self.unifier.init(head_ref, goal_ref);
 
-                            println!(
-                                "Matching relation {:?} => {} against {}... ",
-                                relation_id,
-                                self.heap.display_word(head_ref),
-                                self.heap.display_word(goal_ref),
-                            );
+                            // println!(
+                            //     "Matching relation {:?} => {} against {}... ",
+                            //     relation_id,
+                            //     self.heap.display_word(head_ref),
+                            //     self.heap.display_word(goal_ref),
+                            // );
 
                             if !self
                                 .unifier
@@ -699,15 +704,21 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
                                     g.get_address() - relation.start.get_address() + undo_addr;
                                 let relocated_goal_word = g.with_address(relocated_addr);
 
-                                (relocated_goal_word, goal_module_idx)
+                                let goal_ty = match relocated_goal_word.get_tag() {
+                                    Tag::StructRef => GoalType::Dynamic(module_idx),
+                                    Tag::OpaqueRef => GoalType::Builtin,
+                                    _ => unimplemented!("should be impossible"),
+                                };
+
+                                (relocated_goal_word, goal_ty)
                             });
 
                             // Workaround: #![feature(exact_size_is_empty)]. we stable bois
                             if matches.len() == 0 {
-                                frame.alts = Remaining::Empty;
+                                frame.state = FrameState::Empty;
                             }
 
-                            println!("Success.");
+                            // println!("Success.");
 
                             break 'matching self.trail.append(
                                 next_goal,
@@ -716,8 +727,9 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
                             );
                         }
                     }
-                    Remaining::External(ref mut state) => {
-                        let unfolded = self.handler.handle_goal(
+                    FrameState::Extern(ext, ref mut state) => {
+                        let ext_cached = self.module_cache[ext].clone();
+                        let unfolded = ext_cached.handle_goal(
                             ExternContext {
                                 modules: &mut *self.module_cache,
                                 resolver: &*self.resolver,
@@ -732,7 +744,7 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
                         match unfolded {
                             Unfolded::Succeed { next, empty } => {
                                 if empty {
-                                    frame.alts = Remaining::Empty;
+                                    frame.state = FrameState::Empty;
                                 }
 
                                 next
@@ -740,13 +752,13 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
                             Unfolded::Fail => {
                                 self.trail.unwind(frame.trail_point, &mut self.heap);
                                 self.heap.words.truncate(frame.root_address);
-                                self.objects.truncate(frame.objects_top);
+                                self.objects.unwind(frame.objects_top);
                                 self.frames.pop();
                                 continue 'searching;
                             }
                         }
                     }
-                    Remaining::Builtin(ref mut state) => {
+                    FrameState::Builtin(ref mut state) => {
                         let unfolded = builtins::handle_goal(&mut BuiltinContext {
                             state,
                             tail_frames,
@@ -755,13 +767,14 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
                             heap: &mut *self.heap,
                             trail: &mut *self.trail,
                             unifier: &mut *self.unifier,
+                            objects: &mut *self.objects,
                             goal,
                         });
 
                         match unfolded {
                             Unfolded::Succeed { next, empty } => {
                                 if empty {
-                                    frame.alts = Remaining::Empty;
+                                    frame.state = FrameState::Empty;
                                 }
 
                                 next
@@ -769,20 +782,20 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
                             Unfolded::Fail => {
                                 self.trail.unwind(frame.trail_point, &mut self.heap);
                                 self.heap.words.truncate(frame.root_address);
-                                self.objects.truncate(frame.objects_top);
+                                self.objects.unwind(frame.objects_top);
                                 self.frames.pop();
                                 continue 'searching;
                             }
                         }
                     }
-                    Remaining::Uninit => {
-                        frame.alts = Remaining::Empty;
+                    FrameState::Uninit => {
+                        frame.state = FrameState::Empty;
                         Some(goal)
                     }
-                    Remaining::Empty => {
+                    FrameState::Empty => {
                         self.trail.unwind(frame.trail_point, &mut self.heap);
                         self.heap.words.truncate(frame.root_address);
-                        self.objects.truncate(frame.objects_top);
+                        self.objects.unwind(frame.objects_top);
                         self.frames.pop();
                         continue 'searching;
                     }
@@ -791,19 +804,19 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
                 if let Some(goal) = remaining_goals {
                     let GoalNode {
                         address: goal_ref,
-                        module: goal_module_idx,
+                        ty: goal_type,
                         ..
                     } = self.trail[goal];
 
-                    let alts = match goal_ref.get_tag() {
-                        Tag::StructRef => {
+                    let state = match goal_type {
+                        GoalType::Dynamic(module_idx) => {
                             let matches =
-                                self.module_cache[goal_module_idx].search(&self.heap, goal_ref);
-                            Remaining::Matches(matches)
+                                self.module_cache[module_idx].search(&self.heap, goal_ref);
+                            FrameState::Dynamic(module_idx, matches)
                         }
-                        Tag::ExternRef => {
-                            // TODO because need to figure out what data the handler needs for this
-                            let init_state = self.handler.init_state(ExternContext {
+                        GoalType::Extern(extern_idx) => {
+                            let ext_cached = self.module_cache[extern_idx].clone();
+                            let init_state = ext_cached.init_state(ExternContext {
                                 modules: &mut *self.module_cache,
                                 resolver: &*self.resolver,
                                 heap: &mut *self.heap,
@@ -811,16 +824,13 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
                                 unifier: &mut *self.unifier,
                                 goal,
                             });
-                            Remaining::External(init_state)
+                            FrameState::Extern(extern_idx, init_state)
                         }
-                        Tag::OpaqueRef => Remaining::Builtin(BuiltinState::Uninit),
-                        _ => unreachable!(
-                            "Goals should only start with an `Arity`, `Extern`, or `Opaque` word!"
-                        ),
+                        GoalType::Builtin => FrameState::Builtin(BuiltinState::Uninit),
                     };
 
-                    if let Remaining::Empty = frame.alts {
-                        frame.alts = alts;
+                    if let FrameState::Empty = frame.state {
+                        frame.state = state;
                         frame.goals = remaining_goals;
                     } else {
                         self.frames.push(Frame {
@@ -828,7 +838,7 @@ impl<'all, H: ExternHandler> Runtime<'all, H> {
                             trail_point: undo_trail,
                             objects_top: undo_objects,
                             goals: remaining_goals,
-                            alts,
+                            state,
                         });
                     }
 
@@ -1036,7 +1046,7 @@ pub struct Session<T: ExternFrame> {
 
     unifier: UnificationStack,
     frames: SmallVec<[Frame<T>; 8]>,
-    objects: Vec<Box<dyn Any + Send + Sync>>,
+    objects: ObjectStack,
     trail: Trail,
 
     query_vars: QueryMap,
@@ -1057,7 +1067,7 @@ impl<T: ExternFrame> Session<T> {
 
             unifier: UnificationStack::new(),
             frames: SmallVec::new(),
-            objects: Vec::new(),
+            objects: ObjectStack::new(),
             trail: Trail::new(),
 
             query_vars: QueryMap::new(),
@@ -1068,8 +1078,9 @@ impl<T: ExternFrame> Session<T> {
         &self.heap.symbols
     }
 
-    pub fn load(&mut self, mut query: Query, modules: &ModuleCache)
+    pub fn load<E>(&mut self, mut query: Query, modules: &ModuleCache<E>)
     where
+        E: ExternModule<State = T>,
         T: Default,
     {
         self.load_and_reuse_query(&mut query, modules);
@@ -1080,7 +1091,10 @@ impl<T: ExternFrame> Session<T> {
     /// *After calling this function, the `query` will not be the same `Query`. This
     /// function should only be used if you know what you are doing and are going for
     /// performance.*
-    pub fn load_and_reuse_query(&mut self, query: &mut Query, modules: &ModuleCache) {
+    pub fn load_and_reuse_query<E>(&mut self, query: &mut Query, modules: &ModuleCache<E>)
+    where
+        E: ExternModule<State = T>,
+    {
         assert_eq!(self.symbols(), query.symbols());
 
         self.trail.clear();
@@ -1093,7 +1107,7 @@ impl<T: ExternFrame> Session<T> {
             self.frames.push(Frame {
                 root_address: 0,
                 trail_point: self.trail.get(),
-                objects_top: 0,
+                objects_top: ObjectPoint::NULL,
                 goals: self.trail.append(
                     None,
                     0,
@@ -1101,9 +1115,9 @@ impl<T: ExternFrame> Session<T> {
                         .goals
                         .iter()
                         .copied()
-                        .map(|goal_addr| (goal_addr, module_idx)),
+                        .map(|goal_addr| (goal_addr, GoalType::Dynamic(module_idx))),
                 ),
-                alts: Remaining::Uninit,
+                state: FrameState::Uninit,
             });
         }
 
@@ -1121,14 +1135,10 @@ impl<T: ExternFrame> Session<T> {
 
     // TODO: Separate this function into smaller ones for clarity. I would do this now but I've had
     // so much goddamn espresso my left eye won't stop twitching.
-    pub fn resume_with_context<H>(
-        &mut self,
-        modules: &mut ModuleCache,
-        handler: &mut H,
-        resolver: &H::Resolver,
-    ) -> Yield
+    pub fn resume<E, R>(&mut self, modules: &mut ModuleCache<E>, resolver: &R) -> Yield
     where
-        H: ExternHandler<State = T>,
+        E: ExternModule<State = T>,
+        R: Resolver<E>,
     {
         let mut runtime = Runtime {
             unifier: &mut self.unifier,
@@ -1137,18 +1147,10 @@ impl<T: ExternFrame> Session<T> {
             objects: &mut self.objects,
             module_cache: modules,
             heap: &mut self.heap,
-            handler,
             resolver,
         };
 
         runtime.resume()
-    }
-}
-
-impl Session<()> {
-    pub fn resume(&mut self, modules: &mut ModuleCache, knowledge_base: &KnowledgeBase) -> bool {
-        self.resume_with_context(modules, &mut NullHandler::default(), knowledge_base)
-            .is_solution()
     }
 }
 
@@ -1161,8 +1163,8 @@ pub enum Unfolded {
     Fail,
 }
 
-pub struct ExternContext<'sesh, R: Resolver> {
-    pub modules: &'sesh mut ModuleCache,
+pub struct ExternContext<'sesh, E: ExternModule, R: Resolver<E>> {
+    pub modules: &'sesh mut ModuleCache<E>,
     pub resolver: &'sesh R,
     pub heap: &'sesh mut Heap,
     pub unifier: &'sesh mut UnificationStack,
@@ -1170,7 +1172,7 @@ pub struct ExternContext<'sesh, R: Resolver> {
     pub goal: GoalIndex,
 }
 
-impl<'sesh, R: Resolver> ExternContext<'sesh, R> {
+impl<'sesh, E: ExternModule, R: Resolver<E>> ExternContext<'sesh, E, R> {
     pub fn as_unification_context_with_handler<'ctx>(
         &'ctx mut self,
     ) -> (&'ctx mut UnificationStack, UnificationContext<'ctx>) {
@@ -1188,18 +1190,28 @@ impl<'sesh, R: Resolver> ExternContext<'sesh, R> {
 pub trait ExternFrame: Send + Sync + 'static {}
 impl<T: Send + Sync + 'static> ExternFrame for T {}
 
+#[derive(Debug, Fail)]
+pub enum ExternError<F: Fail> {
+    #[fail(display = "{}", _0)]
+    Message(String),
+
+    #[fail(display = "an error has occurred in an extern module: {}", _0)]
+    Custom(#[fail(cause)] F),
+}
+
 /// Describes the main hooks which can be registered to interact with `Extern` terms.
-pub trait ExternHandler: Sized {
+pub trait ExternModule: Sized + Clone + Send + Sync + 'static {
     /// The `State` type allows handlers to keep state which can be unwound for backtracking.
     /// Whenever your handler is doing mutable-state-things, it should be done through this.
     ///
     /// The actual `State` value is kept in the `Frame` type. It should be cheap to clone,
     /// since it will be cloned by `Session::resume_with_context`.
     type State: ExternFrame;
+    type Error: Fail;
 
-    type Resolver: Resolver;
-
-    fn init_state(&mut self, _goal_context: ExternContext<Self::Resolver>) -> Self::State;
+    fn init_state<R>(&self, _goal_context: ExternContext<Self, R>) -> Self::State
+    where
+        R: Resolver<Self>;
 
     /// Called when an `Extern` goal needs to be proved. This function allows an `Extern`
     /// goal to either fail or succeed and return a new goal list. A no-op implementation
@@ -1207,9 +1219,9 @@ pub trait ExternHandler: Sized {
     ///
     /// ```
     /// # extern crate whisper;
-    /// # use whisper::{Heap, Address, session::{ExternHandler, Frame, Trail, GoalIndex, Unfolded, ExternContext}};
+    /// # use whisper::{Heap, Address, session::{ExternModule, Frame, Trail, GoalIndex, Unfolded, ExternContext}};
     /// # struct NoopHandler;
-    /// # impl ExternHandler for NoopHandler {
+    /// # impl ExternModule for NoopHandler {
     /// # type Context = ();
     /// # type State = ();
     /// fn handle_goal(
@@ -1220,82 +1232,71 @@ pub trait ExternHandler: Sized {
     /// }
     /// # }
     /// ```
-    fn handle_goal(
-        &mut self,
-        _goal_context: ExternContext<Self::Resolver>,
+    fn handle_goal<R>(
+        &self,
+        _goal_context: ExternContext<Self, R>,
         _state: &mut Self::State,
-    ) -> Unfolded {
+    ) -> Unfolded
+    where
+        R: Resolver<Self>,
+    {
         Unfolded::Fail
     }
-}
 
-impl<'a, E: ExternHandler> ExternHandler for &'a mut E {
-    type State = E::State;
-    type Resolver = E::Resolver;
-
-    fn init_state(&mut self, goal_context: ExternContext<Self::Resolver>) -> Self::State {
-        (*self).init_state(goal_context)
+    fn to_bytes(&self) -> Result<Vec<u8>, ExternError<Self::Error>> {
+        Err(ExternError::Message(String::from(
+            "cannot serialize extern module with method default",
+        )))
     }
 
-    fn handle_goal(
-        &mut self,
-        goal_context: ExternContext<Self::Resolver>,
-        state: &mut Self::State,
-    ) -> Unfolded {
-        (*self).handle_goal(goal_context, state)
+    fn from_bytes(_symbols: &SymbolTable, _bytes: &[u8]) -> Result<Self, ExternError<Self::Error>> {
+        Err(ExternError::Message(String::from(
+            "cannot deserialize extern module with method default",
+        )))
     }
 }
 
-pub struct NullHandler<R: Resolver>(PhantomData<R>);
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NullHandler;
 
-impl<R: Resolver> fmt::Debug for NullHandler<R> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("NullHandler").finish()
-    }
-}
-
-impl<R: Resolver> Default for NullHandler<R> {
-    fn default() -> Self {
-        NullHandler(PhantomData)
-    }
-}
-
-impl<R: Resolver> ExternHandler for NullHandler<R> {
+impl ExternModule for NullHandler {
     type State = ();
-    type Resolver = R;
+    type Error = Box<dyn Fail>;
 
-    fn init_state(&mut self, _goal_context: ExternContext<Self::Resolver>) -> Self::State {
+    fn init_state<R>(&self, _goal_context: ExternContext<Self, R>) -> Self::State
+    where
+        R: Resolver<Self>,
+    {
         ()
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct DebugHandler<R: Resolver>(PhantomData<R>);
+// #[derive(Debug, Clone, Copy, Default)]
+// pub struct DebugHandler;
 
-impl<R: Resolver> Default for DebugHandler<R> {
-    fn default() -> Self {
-        DebugHandler(PhantomData)
-    }
-}
+// impl ExternModule for DebugHandler {
+//     type State = ();
 
-impl<R: Resolver> ExternHandler for DebugHandler<R> {
-    type State = ();
-    type Resolver = R;
+//     fn init_state<R>(&mut self, _goal_context: ExternContext<R>) -> Self::State
+//     where
+//         R: Resolver,
+//     {
+//         ()
+//     }
 
-    fn init_state(&mut self, _goal_context: ExternContext<R>) -> Self::State {
-        ()
-    }
+//     fn handle_goal<R>(&mut self, goal_context: ExternContext<R>, _state: &mut ()) -> Unfolded
+//     where
+//         R: Resolver,
+//     {
+//         let ExternContext {
+//             heap, trail, goal, ..
+//         } = goal_context;
 
-    fn handle_goal(&mut self, goal_context: ExternContext<R>, _state: &mut ()) -> Unfolded {
-        let ExternContext {
-            heap, trail, goal, ..
-        } = goal_context;
+//         println!("{}", heap.display_word(trail[goal].address));
 
-        println!("{}", heap.display_word(trail[goal].address));
-
-        Unfolded::Succeed {
-            next: trail[goal].next,
-            empty: true,
-        }
-    }
-}
+//         Unfolded::Succeed {
+//             next: trail[goal].next,
+//             empty: true,
+//         }
+//     }
+// }

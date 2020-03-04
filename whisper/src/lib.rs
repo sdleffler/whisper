@@ -39,7 +39,7 @@ pub mod heap;
 pub mod knowledge_base;
 pub mod maybe_shared;
 pub mod query;
-pub mod session;
+pub mod runtime;
 pub mod trans;
 pub mod word;
 
@@ -47,7 +47,7 @@ pub use crate::{
     heap::{Heap, SharedHeap},
     knowledge_base::KnowledgeBase,
     query::{Query, SharedQuery},
-    session::{ExternHandler, Session, SimpleSession},
+    runtime::{ExternModule, SimpleSession},
     trans::HeapWriter,
     word::{Address, Tag, UnpackedWord, Word},
 };
@@ -71,9 +71,9 @@ pub mod prelude {
         heap::{Heap, SharedHeap},
         knowledge_base::{KnowledgeBase, Module},
         query::{Query, SharedQuery},
-        session::{
+        runtime::{
             goal::{Goal, Variable},
-            ExternHandler, Machine, ModuleCache, Resolver, Runtime, Session, SimpleSession,
+            ExternModule, Machine, ModuleCache, Resolver, Runtime, SimpleSession,
         },
     };
 

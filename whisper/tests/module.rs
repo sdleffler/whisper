@@ -1,19 +1,23 @@
 use ::{
     itertools::Itertools,
-    whisper::{prelude::*, session::DebugHandler},
+    whisper::{
+        prelude::*,
+        runtime::{NullHandler, Session},
+    },
 };
 
 whisper::module! {
     fn list_module();
 
-    fubar if fubar in extern;
+    fubar if
+        println "fubar" in *;
 }
 
 whisper::module! {
     fn wrap_module();
 
     wrap if
-        wrap in extern,
+        println "wrap" in *,
         fubar in list;
 }
 
@@ -35,8 +39,8 @@ fn query_module_inner() {
     let wrap_mod_ref = ir_kb.module(SymbolIndex::MOD);
     wrap_module(&mut terms, &mut ir_kb, wrap_mod_ref);
 
-    let kb = whisper::trans::knowledge_base(&terms, &ir_kb);
-    let mut session = Session::<()>::new(symbols.clone());
+    let kb: KnowledgeBase<NullHandler> = whisper::trans::knowledge_base(&terms, &ir_kb);
+    let mut session = Session::new(symbols.clone());
 
     let ir_query = wrap_query(&mut terms, SymbolIndex::PUBLIC);
     let mut builder = QueryBuilder::from(Query::new(symbols.clone()));
@@ -46,9 +50,7 @@ fn query_module_inner() {
     modules.init(&kb);
     session.load(builder.finish().into_owned(), &modules);
 
-    assert!(session
-        .resume_with_context(&mut modules, &mut DebugHandler::default(), &kb)
-        .is_solution());
+    assert!(session.resume(&mut modules, &kb).is_solution());
 
     println!(
         "{}",

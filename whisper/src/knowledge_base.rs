@@ -1,5 +1,6 @@
 use crate::{
     heap::{Heap, PortableHeap, PortableSymbol},
+    runtime::ExternModule,
     word::{Tag, Word},
     SymbolIndex, SymbolTable,
 };
@@ -7,7 +8,7 @@ use crate::{
 use ::{
     im::HashMap as ImHashMap,
     roaring::RoaringBitmap,
-    serde::{Deserialize, Serialize},
+    serde::{de::DeserializeOwned, Deserialize, Serialize},
     smallvec::SmallVec,
     std::{
         collections::HashMap,
@@ -184,7 +185,7 @@ impl Module {
 
         Self {
             inner: Arc::new(ModuleInner {
-                heap: heap.into(),
+                heap,
                 const_sets,
                 var_sets,
                 relations,
@@ -267,16 +268,30 @@ impl Module {
 }
 
 #[derive(Debug, Clone)]
-pub struct KnowledgeBase {
-    symbols: SymbolTable,
-    modules: ImHashMap<SymbolIndex, Module>,
+pub enum KbEntry<E: ExternModule> {
+    Dynamic(Module),
+    Extern(E),
 }
 
-impl KnowledgeBase {
-    pub fn new(symbols: SymbolTable) -> Self {
+impl<E: ExternModule> From<Module> for KbEntry<E> {
+    fn from(module: Module) -> Self {
+        Self::Dynamic(module)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct KnowledgeBase<E: ExternModule> {
+    symbols: SymbolTable,
+    modules: ImHashMap<SymbolIndex, KbEntry<E>>,
+    root: SymbolIndex,
+}
+
+impl<E: ExternModule> KnowledgeBase<E> {
+    pub fn new(symbols: SymbolTable, root: SymbolIndex) -> Self {
         Self {
             symbols,
             modules: ImHashMap::new(),
+            root,
         }
     }
 
@@ -284,37 +299,46 @@ impl KnowledgeBase {
         &self.symbols
     }
 
-    pub fn get(&self, idx: SymbolIndex) -> Option<&Module> {
+    pub fn get(&self, idx: SymbolIndex) -> Option<&KbEntry<E>> {
         self.modules.get(&idx)
     }
 
-    pub fn root(&self) -> &Module {
-        self.get(SymbolIndex::MOD).unwrap()
+    pub fn root(&self) -> (SymbolIndex, &KbEntry<E>) {
+        (SymbolIndex::MOD, self.get(SymbolIndex::MOD).unwrap())
     }
 
-    pub fn insert(&mut self, module: impl Into<Module>) {
-        let module = module.into();
-        assert_eq!(&self.symbols, module.symbols());
-        self.modules.insert(module.name(), module);
+    pub fn insert(&mut self, name: SymbolIndex, module: impl Into<KbEntry<E>>) {
+        // TODO: assert symbol table match
+        self.modules.insert(name, module.into());
     }
 
     pub fn remove(&mut self, name: SymbolIndex) {
         self.modules.remove(&name);
     }
 
-    pub fn import(&mut self, root: SymbolIndex, module: &PortableModule) {
-        let module = module.into_module_with_root(self.symbols.clone(), root);
-        //println!("Importing: {}", self.symbols.normalize_full(&module.name));
-        self.insert(module);
-    }
+    pub fn import(&mut self, root: SymbolIndex, name: &PortableSymbol, module: &PortableKbEntry) {
+        let name = name.into_symbol_with_root_module(self.symbols(), root);
 
-    pub fn import_all(&mut self, name: SymbolIndex, portable_kb: &PortableKnowledgeBase) {
-        for portable_module in &portable_kb.modules {
-            self.import(name, portable_module);
+        match module {
+            PortableKbEntry::Dynamic(module) => {
+                let module = module.into_module_with_root(self.symbols.clone(), root);
+                //println!("Importing: {}", self.symbols.normalize_full(&module.name));
+                self.insert(name, module);
+            }
+            PortableKbEntry::Extern(ext) => {
+                let ext = E::from_bytes(self.symbols(), ext).expect("todo");
+                self.insert(name, KbEntry::Extern(ext));
+            }
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &Module> {
+    pub fn import_all(&mut self, root: SymbolIndex, portable_kb: &PortableKnowledgeBase) {
+        for (portable_name, portable_module) in &portable_kb.modules {
+            self.import(root, portable_name, portable_module);
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &KbEntry<E>> {
         self.modules.values()
     }
 }
@@ -418,45 +442,78 @@ impl PortableModule {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub enum PortableKbEntry {
+    Dynamic(PortableModule),
+    Extern(Vec<u8>),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PortableKnowledgeBase {
-    modules: Vec<PortableModule>,
+    modules: Vec<(PortableSymbol, PortableKbEntry)>,
 }
 
 impl PortableKnowledgeBase {
-    pub fn from_knowledge_base(knowledge_base: &KnowledgeBase) -> Self {
+    pub fn from_knowledge_base<E>(knowledge_base: &KnowledgeBase<E>) -> Self
+    where
+        E: ExternModule + Serialize,
+    {
         Self {
             modules: knowledge_base
                 .modules
-                .values()
-                .map(|module| PortableModule::from_module(&*module))
+                .iter()
+                .map(|(name, entry)| {
+                    let kb_entry = match entry {
+                        KbEntry::Dynamic(module) => {
+                            PortableKbEntry::Dynamic(PortableModule::from_module(&*module))
+                        }
+                        KbEntry::Extern(e) => PortableKbEntry::Extern(e.to_bytes().expect("todo")),
+                    };
+                    let name = PortableSymbol::from_symbol(knowledge_base.symbols(), *name);
+                    (name, kb_entry)
+                })
                 .collect(),
         }
     }
 
-    pub fn into_knowledge_base_with_root(
+    pub fn into_knowledge_base_with_root<E>(
         &self,
         symbols: SymbolTable,
         root: SymbolIndex,
-    ) -> KnowledgeBase {
+    ) -> KnowledgeBase<E>
+    where
+        E: ExternModule + DeserializeOwned,
+    {
         let modules = self
             .modules
             .iter()
-            .map(|module| {
-                let module = module.into_module_with_root(symbols.clone(), root);
-                (module.name(), Module::from(module))
+            .map(|(name, module)| {
+                let kb_entry = match module {
+                    PortableKbEntry::Dynamic(pmod) => {
+                        let module = pmod.into_module_with_root(symbols.clone(), root);
+                        KbEntry::Dynamic(module)
+                    }
+                    PortableKbEntry::Extern(e) => {
+                        KbEntry::Extern(E::from_bytes(&symbols, e).expect("todo"))
+                    }
+                };
+                (name.into_symbol_with_root_module(&symbols, root), kb_entry)
             })
             .collect();
 
-        KnowledgeBase { symbols, modules }
+        KnowledgeBase {
+            symbols,
+            modules,
+            root,
+        }
     }
 }
 
 // The only purpose of this function is to fail compilation if these types do not
 // implement `Send + Sync`.
 #[allow(dead_code, unconditional_recursion)]
-fn assert_send_sync<T: Send + Sync>() {
-    assert_send_sync::<Module>();
-    assert_send_sync::<KnowledgeBase>();
-    assert_send_sync::<PortableModule>();
-    assert_send_sync::<PortableKnowledgeBase>();
+fn assert_send_sync<T: Send + Sync, E: ExternModule>() {
+    assert_send_sync::<Module, E>();
+    assert_send_sync::<KnowledgeBase<E>, E>();
+    assert_send_sync::<PortableModule, E>();
+    assert_send_sync::<PortableKnowledgeBase, E>();
 }

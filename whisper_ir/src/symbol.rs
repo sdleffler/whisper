@@ -35,6 +35,9 @@ whisper_codegen::reserved_symbols! {
     pub "try",
     pub "cut",
 
+    // Foobar corgefred.
+    pub "println",
+
     // List sugar
     internal "list_nil",
 

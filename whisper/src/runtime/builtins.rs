@@ -2,12 +2,13 @@ use std::any::Any;
 
 use crate::{
     heap::Heap,
-    session::{Frame, GoalIndex, ModuleCache, Resolver, Trail, Unfolded, UnificationStack},
+    runtime::{
+        CacheIndex, ExternModule, Frame, GoalIndex, GoalType, ModuleCache, ObjectStack, Resolver,
+        Trail, Unfolded, UnificationStack,
+    },
     word::{Address, Tag},
     SymbolIndex,
 };
-
-pub mod hash_map;
 
 #[macro_export]
 macro_rules! unpack {
@@ -19,14 +20,15 @@ macro_rules! unpack {
     };
 }
 
-pub struct BuiltinContext<'sesh, S, R: Resolver> {
+pub struct BuiltinContext<'sesh, E: ExternModule, R: Resolver<E>> {
     pub state: &'sesh mut BuiltinState,
-    pub tail_frames: &'sesh mut [Frame<S>],
+    pub tail_frames: &'sesh mut [Frame<E::State>],
     pub heap: &'sesh mut Heap,
-    pub modules: &'sesh mut ModuleCache,
+    pub modules: &'sesh mut ModuleCache<E>,
     pub resolver: &'sesh R,
     pub unifier: &'sesh mut UnificationStack,
     pub trail: &'sesh mut Trail,
+    pub objects: &'sesh mut ObjectStack,
     pub goal: GoalIndex,
 }
 
@@ -37,12 +39,13 @@ pub enum BuiltinState {
 }
 
 #[inline]
-pub fn builtin_cut<'sesh, S, R>(
-    ctx: &'sesh mut BuiltinContext<'sesh, S, R>,
+pub fn builtin_cut<'sesh, E, R>(
+    ctx: &'sesh mut BuiltinContext<'sesh, E, R>,
     _addr: Address,
 ) -> Unfolded
 where
-    R: Resolver,
+    E: ExternModule,
+    R: Resolver<E>,
 {
     let goal = &ctx.trail[ctx.goal];
 
@@ -58,12 +61,13 @@ where
 
 /// The `is` builtin unifies two terms. That's it. Nice and simple.
 #[inline]
-pub fn builtin_is<'sesh, S, R>(
-    ctx: &'sesh mut BuiltinContext<'sesh, S, R>,
+pub fn builtin_is<'sesh, E, R>(
+    ctx: &'sesh mut BuiltinContext<'sesh, E, R>,
     addr: Address,
 ) -> Unfolded
 where
-    R: Resolver,
+    E: ExternModule,
+    R: Resolver<E>,
 {
     ctx.unifier.init(ctx.heap[addr + 2], ctx.heap[addr + 3]);
 
@@ -84,18 +88,24 @@ where
 }
 
 #[inline]
-pub fn builtin_try_in<'sesh, S, R>(
-    ctx: &'sesh mut BuiltinContext<'sesh, S, R>,
+pub fn builtin_try_in<'sesh, E, R>(
+    ctx: &'sesh mut BuiltinContext<'sesh, E, R>,
     addr: Address,
 ) -> Unfolded
 where
-    R: Resolver,
+    E: ExternModule,
+    R: Resolver<E>,
 {
     let prev_next_goal = ctx.trail[ctx.goal].next;
     let next_goal = ctx.heap[addr + 2];
     let next_module = ctx
         .modules
         .get_or_insert(ctx.heap[addr + 3], ctx.heap, ctx.resolver);
+
+    let goal_type = match next_module {
+        CacheIndex::Dynamic(module_idx) => GoalType::Dynamic(module_idx),
+        CacheIndex::Extern(ext_idx) => GoalType::Extern(ext_idx),
+    };
 
     // println!(
     //     "`{}` in module with name `{}`",
@@ -104,19 +114,35 @@ where
     // );
 
     Unfolded::Succeed {
-        next: Some(ctx.trail.cons(
-            prev_next_goal,
-            next_goal,
-            next_module,
-            ctx.tail_frames.len(),
-        )),
+        next: Some(
+            ctx.trail
+                .cons(prev_next_goal, next_goal, goal_type, ctx.tail_frames.len()),
+        ),
         empty: true,
     }
 }
 
-pub fn handle_goal<'sesh, S, R>(ctx: &'sesh mut BuiltinContext<'sesh, S, R>) -> Unfolded
+#[inline]
+pub fn builtin_println<'sesh, E, R>(
+    ctx: &'sesh mut BuiltinContext<'sesh, E, R>,
+    addr: Address,
+) -> Unfolded
 where
-    R: Resolver,
+    E: ExternModule,
+    R: Resolver<E>,
+{
+    println!("{}", ctx.heap.display_at(addr + 2));
+
+    Unfolded::Succeed {
+        next: ctx.trail[ctx.goal].next,
+        empty: true,
+    }
+}
+
+pub fn handle_goal<'sesh, E, R>(ctx: &'sesh mut BuiltinContext<'sesh, E, R>) -> Unfolded
+where
+    E: ExternModule,
+    R: Resolver<E>,
 {
     let goal_addr = ctx.trail[ctx.goal]
         .address
@@ -133,6 +159,7 @@ where
 
     match (arity, ctx.heap.symbols().index(first)) {
         (1, SymbolIndex::CUT) => builtin_cut(ctx, goal_addr),
+        (2, SymbolIndex::PRINTLN) => builtin_println(ctx, goal_addr),
         (3, SymbolIndex::IS) => builtin_is(ctx, goal_addr),
         (3, SymbolIndex::LET) => todo!("evaluation for `let` goals not implemented yet"),
         (3, SymbolIndex::TRY) => builtin_try_in(ctx, goal_addr),

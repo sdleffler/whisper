@@ -151,7 +151,7 @@ impl<'heap> TermReader<'heap> for HeapReader<'heap> {
                 UnpackedNumber::Int32(i) => Some(v.visit_i32(i)),
                 UnpackedNumber::Float32(f) => Some(v.visit_f32(f)),
             },
-            Unused1(_) | Unused3(_) => unimplemented!("UNUSED"),
+            Unused1(_) | Object(_) => unimplemented!("UNUSED"),
             Const(index) => {
                 let symbols = self.heap.symbols();
                 let localized = symbols.index(index);

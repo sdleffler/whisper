@@ -141,7 +141,7 @@ impl<'heap> fmt::Display for DisplayHeap<'heap> {
                     Number(uint) => write!(f, "Num: {:04}", uint)?,
                     Unused1(v) => write!(f, "Unu1:{:04x}", v)?,
                     Const(c) => write!(f, "Cnst:{:04x}", c)?,
-                    Unused3(v) => write!(f, "Unu3:{:04x}", v)?,
+                    Object(v) => write!(f, "Unu3:{:04x}", v)?,
                     StructArity(a) => write!(f, "StAr:{:04x}", a)?,
                     ExternArity(a) => write!(f, "ExAr:{:04x}", a)?,
                     BinaryArity(a) => write!(f, "BiAr:{:04x}", a)?,
@@ -191,7 +191,7 @@ impl<'heap> fmt::Display for DisplayAt<'heap> {
                 let indexed = symbols.index(c);
                 write!(f, "\"{}\"", symbols.read().display(indexed))
             }
-            Unused3(v) => write!(f, "Unused3({:x})", v),
+            Object(v) => write!(f, "Object({:x})", v),
             StructArity(arity) => {
                 let display = self.heap.words[self.addr + 1..][..arity]
                     .iter()
@@ -260,7 +260,7 @@ impl<'heap> fmt::Display for DisplayWord<'heap> {
                 let indexed = symbols.index(c);
                 write!(f, "\"{}\"", symbols.read().display(indexed))
             }
-            Unused3(v) => write!(f, "Unu3({})", v),
+            Object(v) => write!(f, "Unu3({})", v),
             StructArity(arity) => write!(f, "StrA({})", arity),
             ExternArity(arity) => write!(f, "ExtA({})", arity),
             BinaryArity(arity) => write!(f, "BinA({})", arity),

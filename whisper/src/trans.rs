@@ -14,6 +14,8 @@ use crate::{
     heap::Heap,
     knowledge_base::{KnowledgeBase, Module, Relation},
     query::Query,
+    runtime::ExternModule,
+    SymbolIndex,
 };
 
 pub fn query(terms: &IrTermGraph, query: &IrQuery, mut heap: Heap) -> Query {
@@ -76,10 +78,16 @@ pub fn module(terms: &IrTermGraph, module: &IrModule, mut heap: Heap) -> Module 
     Module::from_mapped_heap(module.root().clone(), heap, relations)
 }
 
-pub fn knowledge_base(terms: &IrTermGraph, ir_modules: &IrKnowledgeBase) -> KnowledgeBase {
-    let mut kb = KnowledgeBase::new(terms.symbols().clone());
+pub fn knowledge_base<E: ExternModule>(
+    terms: &IrTermGraph,
+    ir_modules: &IrKnowledgeBase,
+) -> KnowledgeBase<E> {
+    let mut kb = KnowledgeBase::new(terms.symbols().clone(), SymbolIndex::MOD);
     for ir_module in ir_modules.iter() {
-        kb.insert(module(terms, ir_module, Heap::new(terms.symbols().clone())));
+        kb.insert(
+            ir_module.root(),
+            module(terms, ir_module, Heap::new(terms.symbols().clone())),
+        );
     }
 
     kb

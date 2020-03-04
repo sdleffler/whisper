@@ -549,6 +549,10 @@ impl Parse for IrRef {
                 input.parse::<Token![extern]>()?;
 
                 Ok(new_compound(IrCompoundKind::Extern, args))
+            } else if input.peek(Token![*]) {
+                input.parse::<Token![*]>()?;
+
+                Ok(new_compound(IrCompoundKind::Opaque, args))
             } else {
                 let forked = input.fork();
                 if forked.peek(SynIdent::peek_any) {

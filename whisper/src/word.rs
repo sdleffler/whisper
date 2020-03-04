@@ -33,7 +33,7 @@ pub enum Tag {
     /* 0b0000 */ Number = 0,
     /* 0b0001 */ Unused1 = 1,
     /* 0b0010 */ Const = 2,
-    /* 0b0011 */ Unused3 = 3,
+    /* 0b0011 */ Object = 3,
     /* 0b0100 */ StructArity = 4,
     /* 0b0101 */ ExternArity = 5,
     /* 0b0110 */ BinaryArity = 6,
@@ -55,7 +55,7 @@ impl Tag {
     pub const NUMBER: UWordBits = Tag::Number as UWordBits;
     pub const UNUSED1: UWordBits = Tag::Unused1 as UWordBits;
     pub const CONST: UWordBits = Tag::Const as UWordBits;
-    pub const UNUSED3: UWordBits = Tag::Unused3 as UWordBits;
+    pub const OBJECT: UWordBits = Tag::Object as UWordBits;
     pub const STRUCT_ARITY: UWordBits = Tag::StructArity as UWordBits;
     pub const EXTERN_ARITY: UWordBits = Tag::ExternArity as UWordBits;
     pub const BINARY_ARITY: UWordBits = Tag::BinaryArity as UWordBits;
@@ -137,6 +137,11 @@ impl Word {
     }
 
     #[inline]
+    pub fn object(i: usize) -> Word {
+        UnpackedWord::Object(i).pack()
+    }
+
+    #[inline]
     pub fn struct_arity(arity: usize) -> Word {
         UnpackedWord::StructArity(arity).pack()
     }
@@ -204,7 +209,7 @@ impl Word {
             Tag::NUMBER => Number(UnpackedNumber::from_bits(v)),
             Tag::UNUSED1 => Unused1(v as usize),
             Tag::CONST => Const(v as usize),
-            Tag::UNUSED3 => Unused3(v as usize),
+            Tag::OBJECT => Object(v as usize),
             Tag::STRUCT_ARITY => StructArity(v as usize),
             Tag::EXTERN_ARITY => ExternArity(v as usize),
             Tag::BINARY_ARITY => BinaryArity(v as usize),
@@ -250,7 +255,7 @@ impl Word {
             Tag::Number
             | Tag::Unused1
             | Tag::Const
-            | Tag::Unused3
+            | Tag::Object
             | Tag::StructArity
             | Tag::ExternArity
             | Tag::BinaryArity
@@ -314,9 +319,6 @@ impl Word {
             heap[self.get_address()]
         } else if self.is_indirect() {
             self.with_address(0)
-        } else if self.get_tag() == Tag::Unused3 {
-            let float = f32::from_bits(self.get_value() as u32);
-            self.with_value(float.round().to_bits() as UWordBits)
         } else {
             self
         }
@@ -337,7 +339,7 @@ impl Word {
             Tag::NUMBER => Tag::Number,
             Tag::UNUSED1 => Tag::Unused1,
             Tag::CONST => Tag::Const,
-            Tag::UNUSED3 => Tag::Unused3,
+            Tag::OBJECT => Tag::Object,
             Tag::STRUCT_ARITY => Tag::StructArity,
             Tag::EXTERN_ARITY => Tag::ExternArity,
             Tag::BINARY_ARITY => Tag::BinaryArity,
@@ -447,7 +449,7 @@ pub enum UnpackedWord {
     Number(UnpackedNumber),
     Unused1(usize),
     Const(usize),
-    Unused3(usize),
+    Object(usize),
     StructArity(usize),
     ExternArity(usize),
     BinaryArity(usize),
@@ -469,7 +471,7 @@ impl UnpackedWord {
         let bits = match self {
             Number(number) => number.to_bits(),
 
-            Unused1(n) | Const(n) | Unused3(n) | StructArity(n) | ExternArity(n)
+            Unused1(n) | Const(n) | Object(n) | StructArity(n) | ExternArity(n)
             | BinaryArity(n) | OpaqueArity(n) => n as UWordBits,
 
             Var(a) | Tagged(a) | Cons(a) | Cons2(a) | StructRef(a) | ExternRef(a)
@@ -485,7 +487,7 @@ impl UnpackedWord {
             Number(_) => Tag::Number,
             Unused1(_) => Tag::Unused1,
             Const(_) => Tag::Const,
-            Unused3(_) => Tag::Unused3,
+            Object(_) => Tag::Object,
             StructArity(_) => Tag::StructArity,
             ExternArity(_) => Tag::ExternArity,
             BinaryArity(_) => Tag::BinaryArity,
