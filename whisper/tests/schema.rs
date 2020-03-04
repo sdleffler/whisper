@@ -1,7 +1,10 @@
 use ::{
     itertools::Itertools,
     serde::{Deserialize, Serialize},
-    whisper::prelude::*,
+    whisper::{
+        prelude::*,
+        runtime::{NullHandler, Session},
+    },
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -54,7 +57,7 @@ fn query_foo() {
     let validator_mod = modules.module(SymbolIndex::MOD);
     validator(&mut terms, &mut modules, validator_mod);
 
-    let validator_kb = whisper::trans::knowledge_base(&terms, &modules);
+    let validator_kb = whisper::trans::knowledge_base::<NullHandler>(&terms, &modules);
 
     let mut session = Session::new(symbol_table.clone());
 
@@ -74,7 +77,9 @@ fn query_foo() {
     module_cache.init(&validator_kb);
     session.load_and_reuse_query(&mut query, &module_cache);
 
-    assert!(session.resume(&mut module_cache, &validator_kb));
+    assert!(session
+        .resume(&mut module_cache, &validator_kb)
+        .is_solution());
     let displayable = session
         .query_vars()
         .iter()
@@ -85,7 +90,10 @@ fn query_foo() {
     artifact.insert_display("session query", &displayable);
     println!("Solution: {}", displayable);
 
-    if session.resume(&mut module_cache, &validator_kb) {
+    if session
+        .resume(&mut module_cache, &validator_kb)
+        .is_solution()
+    {
         let displayable = session
             .query_vars()
             .iter()
@@ -104,7 +112,9 @@ fn query_foo() {
     builder.finish();
 
     session.load_and_reuse_query(&mut query, &module_cache);
-    assert!(!session.resume(&mut module_cache, &validator_kb));
+    assert!(!session
+        .resume(&mut module_cache, &validator_kb)
+        .is_solution());
 
     egress.close_and_assert_unregressed().unwrap();
 }

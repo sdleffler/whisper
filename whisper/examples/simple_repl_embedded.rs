@@ -2,7 +2,10 @@ use ::{
     failure::Error,
     itertools::Itertools,
     std::io::{self, prelude::*},
-    whisper::prelude::*,
+    whisper::{
+        prelude::*,
+        runtime::{NullHandler, Session},
+    },
 };
 
 whisper::module! {
@@ -30,12 +33,7 @@ fn main() -> Result<(), Error> {
 
     println!("Compiled module IR:\n{:?}", modules[module]);
 
-    let kb = whisper::trans::knowledge_base(&terms, &modules);
-
-    println!(
-        "Compiled knowledge base:\n{}",
-        kb.get(SymbolIndex::MOD).unwrap().display()
-    );
+    let kb = whisper::trans::knowledge_base::<NullHandler>(&terms, &modules);
     // println!("(debug view)\n{:?}", kb);
 
     let mut session = Session::new(symbol_table.clone());
@@ -56,7 +54,9 @@ fn main() -> Result<(), Error> {
         let mut solutions_found = 0;
         const SOLUTION_LIMIT: usize = 32;
         loop {
-            if !session.resume(&mut module_cache, &kb) || solutions_found >= SOLUTION_LIMIT {
+            if !session.resume(&mut module_cache, &kb).is_solution()
+                || solutions_found >= SOLUTION_LIMIT
+            {
                 if solutions_found >= SOLUTION_LIMIT {
                     println!(
                         "LIMIT EXCEEDED! Halting! (Limit: {} solutions)",

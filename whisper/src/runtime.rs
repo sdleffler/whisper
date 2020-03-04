@@ -434,13 +434,28 @@ impl<E: ExternModule> ModuleCache<E> {
     }
 }
 
-#[derive(Debug)]
 pub struct Machine<E: ExternModule> {
     unifier: UnificationStack,
     frames: SmallVec<[Frame<E::State>; 8]>,
     trail: Trail,
     objects: ObjectStack,
     module_cache: ModuleCache<E>,
+}
+
+impl<E> fmt::Debug for Machine<E>
+where
+    E: ExternModule + fmt::Debug,
+    E::State: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Machine")
+            .field("unifier", &self.unifier)
+            .field("frames", &self.frames)
+            .field("trail", &self.trail)
+            .field("objects", &self.objects)
+            .field("module_cache", &self.module_cache)
+            .finish()
+    }
 }
 
 impl<E: ExternModule> Default for Machine<E> {
@@ -476,6 +491,20 @@ where
     pub machine: Machine<E>,
     pub heap: Heap,
     pub knowledge_base: KnowledgeBase<E>,
+}
+
+impl<E> fmt::Debug for SimpleSession<E>
+where
+    E: ExternModule + fmt::Debug,
+    E::State: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("SimpleSession")
+            .field("machine", &self.machine)
+            .field("heap", &self.heap)
+            .field("knowledge_base", &self.knowledge_base)
+            .finish()
+    }
 }
 
 impl<E> SimpleSession<E>

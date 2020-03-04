@@ -1,6 +1,10 @@
 use ::{
     serde::{Deserialize, Serialize},
-    whisper::{constants, prelude::*, session::NullHandler},
+    whisper::{
+        constants,
+        prelude::*,
+        runtime::{NullHandler, SimpleSession},
+    },
 };
 
 macro_rules! map(
@@ -59,7 +63,7 @@ constants! {
 
 #[derive(Debug)]
 pub struct Typechecker {
-    session: SimpleSession<NullHandler<KnowledgeBase>>,
+    session: SimpleSession<NullHandler>,
 }
 
 impl Typechecker {

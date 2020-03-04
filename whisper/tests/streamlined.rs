@@ -1,7 +1,7 @@
 use ::{
     failure::Error,
     serde::{Deserialize, Serialize},
-    whisper::{constant, constants, prelude::*, session::DebugHandler},
+    whisper::{constant, constants, prelude::*, runtime::NullHandler},
 };
 
 whisper::knowledge_base! {
@@ -40,7 +40,7 @@ whisper::knowledge_base! {
     // There are a number of ways to get data out of Whisper in a way that's
     // convenient for aggregating errors, but for now imagine this is a println.
     valid Foo if
-        "failed to validate!" Foo in extern,
+        println ("failed to validate!" Foo) in *,
         error "TODO: add some stdlib stuff so that we can report errors!";
 }
 
@@ -68,14 +68,13 @@ fn query_foo() -> Result<(), Error> {
     let mut terms = IrTermGraph::new(symbol_table.clone());
     let modules = foo_schema(&mut terms);
 
-    let mut machine = Machine::new();
+    let mut machine = Machine::<NullHandler>::new();
     let mut heap = Heap::new(symbol_table.clone());
-    let mut handler = DebugHandler::default();
     let resolver = whisper::trans::knowledge_base(&terms, &modules);
     machine.init(&resolver);
 
     let solution = {
-        let mut runtime = Runtime::new(&mut machine, &mut heap, &mut handler, &resolver);
+        let mut runtime = Runtime::new(&mut machine, &mut heap, &resolver);
         runtime.solve_once((&(
             constant!(valid),
             FooConfig {
@@ -88,7 +87,7 @@ fn query_foo() -> Result<(), Error> {
     assert!(solution.is_some());
 
     let solution = {
-        let mut runtime = Runtime::new(&mut machine, &mut heap, &mut handler, &resolver);
+        let mut runtime = Runtime::new(&mut machine, &mut heap, &resolver);
         runtime.solve_once((&(
             Keywords::valid,
             FooConfig {
@@ -104,7 +103,7 @@ fn query_foo() -> Result<(), Error> {
     assert!(solution.is_some());
 
     let solution = {
-        let mut runtime = Runtime::new(&mut machine, &mut heap, &mut handler, &resolver);
+        let mut runtime = Runtime::new(&mut machine, &mut heap, &resolver);
         runtime.solve_once((&(
             constant!(valid),
             FooConfig {
@@ -120,7 +119,7 @@ fn query_foo() -> Result<(), Error> {
     assert!(solution.is_none());
 
     let solution = {
-        let mut runtime = Runtime::new(&mut machine, &mut heap, &mut handler, &resolver);
+        let mut runtime = Runtime::new(&mut machine, &mut heap, &resolver);
         runtime.solve_once((&(
             constant!(valid),
             FooConfig {

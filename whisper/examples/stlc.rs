@@ -1,6 +1,9 @@
 use ::{
     serde::{Deserialize, Serialize},
-    whisper::{prelude::*, session::DebugHandler},
+    whisper::{
+        prelude::*,
+        runtime::{NullHandler, Session},
+    },
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,10 +22,6 @@ pub enum Term {
 
 whisper::module! {
     fn stlc();
-
-    context Gamma proves Term is_type Sigma if
-        context Gamma proves Term is_type Sigma in extern,
-        fail;
 
     // Rule 1.) Variables can be typed if they are in the context.
     context { X: Sigma | Gamma } proves ("Var" : X) is_type Sigma;
@@ -43,10 +42,6 @@ whisper::module! {
     context Gamma proves ("App" : (E1 E2)) is_type Tau if
         context Gamma proves E1 is_type ("Fun" : (Sigma Tau)),
         context Gamma proves E2 is_type Sigma;
-
-    context Gamma proves Term is_type Sigma if
-        context Gamma proves Term is_type Sigma failed in extern,
-        fail;
 }
 
 whisper::query! {
@@ -63,8 +58,8 @@ whisper::query! {
 #[derive(Debug)]
 pub struct Typechecker {
     terms: IrTermGraph,
-    knowledge_base: KnowledgeBase,
-    module_cache: ModuleCache,
+    knowledge_base: KnowledgeBase<NullHandler>,
+    module_cache: ModuleCache<NullHandler>,
     query: Query,
     session: Session<()>,
 }
@@ -79,10 +74,6 @@ impl Typechecker {
         stlc(&mut terms, &mut modules, stlc_module);
 
         let knowledge_base = whisper::trans::knowledge_base(&terms, &modules);
-        println!(
-            "Compiled knowledge base:\n{}",
-            knowledge_base.root().display()
-        );
         let session = Session::new(symbols.clone());
         let mut module_cache = ModuleCache::new();
         module_cache.init(&knowledge_base);
@@ -110,11 +101,7 @@ impl Typechecker {
 
         if self
             .session
-            .resume_with_context(
-                &mut self.module_cache,
-                &mut DebugHandler::default(),
-                &self.knowledge_base,
-            )
+            .resume(&mut self.module_cache, &self.knowledge_base)
             .is_solution()
         {
             let addr = self.session.query_vars()[&"Tau".into()];
