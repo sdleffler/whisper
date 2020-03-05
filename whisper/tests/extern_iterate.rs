@@ -12,11 +12,11 @@ whisper::knowledge_base! {
     fn test();
 
     iterate if
-        foo in iterator,
+        in(iterator) foo,
         bar;
 
     bar if
-        println "bar" in *;
+        in(*) println "bar";
 }
 
 #[derive(Debug)]

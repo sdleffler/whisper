@@ -10,37 +10,37 @@ whisper::knowledge_base! {
     mod without {
         {K: V | KVs} without_key K with_value V gives KVs;
         {L: Q | LQs} without_key K with_value V gives {L: Q | KVs} if
-            LQs without_key K with_value V gives KVs in self;
+            LQs without_key K with_value V gives KVs;
     }
 
     mod match {
         {K: V | KVs} matches OtherKVs if
-            KVs matches KVs_ in self,
-            K matches K_ in self,
-            V matches V_ in self,
-            OtherKVs without_key K_ with_value V_ gives KVs_ in super::without;
+            KVs matches KVs_,
+            K matches K_,
+            V matches V_,
+            in(super::without) OtherKVs without_key K_ with_value V_ gives KVs_;
         X matches X;
     }
 
     // If TLS is disabled, we dgaf about the key/cert.
     valid Foo if
-        Foo matches { tls_enabled: false | _ } in match;
+        in(match) Foo matches { tls_enabled: false | _ };
 
     // If TLS is enabled, we want to be sure that key/cert are both `Some`.
     valid Foo if
-        Foo matches {
+        in(match) Foo matches {
             tls_enabled: true,
             tls: ("Some" : {
                 cert: ("Some" : _),
                 key: ("Some" : _),
             })
-        } in match;
+        };
 
     // Eventually we'll have some stuff for error reporting in the stdlib.
     // There are a number of ways to get data out of Whisper in a way that's
     // convenient for aggregating errors, but for now imagine this is a println.
     valid Foo if
-        println ("failed to validate!" Foo) in *,
+        in(*) println ("failed to validate!" Foo),
         error "TODO: add some stdlib stuff so that we can report errors!";
 }
 

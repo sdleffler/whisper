@@ -167,6 +167,7 @@ fn is_term_start(lookahead: &Lookahead1) -> bool {
         || lookahead.peek(Bracket)
         || lookahead.peek(Brace)
         || lookahead.peek(Token![!])
+        || lookahead.peek(Token![in])
 }
 
 fn is_compound_start(lookahead: &Lookahead1) -> bool {
@@ -528,53 +529,58 @@ impl Parse for IrRef {
             let lhs = input.parse()?;
             input.parse::<Token![=]>()?;
             let rhs = input.parse()?;
-            return Ok(new_let(lhs, rhs));
+
+            Ok(new_let(lhs, rhs))
         } else if lookahead.peek(Token![try]) {
             input.parse::<Token![try]>()?;
             let term = input.parse()?;
             input.parse::<Token![=]>()?;
             let rhs = input.parse()?;
-            return Ok(new_is(term, rhs));
-        }
 
-        let mut args = Vector::<IrNode>::new();
-        while is_term_start(&input.lookahead1()) {
-            args.push_back(input.parse()?);
-        }
-
-        if input.peek(Token![in]) {
+            Ok(new_is(term, rhs))
+        } else if lookahead.peek(Token![in]) {
             input.parse::<Token![in]>()?;
+            let content;
+            parenthesized!(content in input);
 
-            if input.peek(Token![extern]) {
-                input.parse::<Token![extern]>()?;
+            let mut args = Vector::<IrNode>::new();
+            while is_term_start(&input.lookahead1()) {
+                args.push_back(input.parse()?);
+            }
 
-                Ok(new_compound(IrCompoundKind::Extern, args))
-            } else if input.peek(Token![*]) {
-                input.parse::<Token![*]>()?;
-
+            let lookahead = content.lookahead1();
+            if lookahead.peek(Token![*]) {
+                content.parse::<Token![*]>()?;
                 Ok(new_compound(IrCompoundKind::Opaque, args))
-            } else {
-                let forked = input.fork();
-                if forked.peek(SynIdent::peek_any) {
-                    let ident = Ident::from(&*forked.call(SynIdent::parse_any)?.to_string());
-                    if ident.str_ref().starts_with(char::is_uppercase) {
-                        input.advance_to(&forked);
-                        let var = IrNode::Var(Var::Named(ident));
-                        return Ok(new_try_in(new_compound(IrCompoundKind::Struct, args), var));
+            } else if lookahead.peek(SynIdent::peek_any) {
+                let forked = content.fork();
+                let ident = Ident::from(&*forked.call(SynIdent::parse_any)?.to_string());
+                if ident.str_ref().starts_with(char::is_uppercase) {
+                    content.advance_to(&forked);
+                    let var = IrNode::Var(Var::Named(ident));
+                    Ok(new_try_in(new_compound(IrCompoundKind::Struct, args), var))
+                } else {
+                    let mut kb = content.parse::<Name>()?;
+                    if kb.root == SymbolIndex::PUBLIC {
+                        kb.root = SymbolIndex::MOD;
                     }
-                }
 
-                let mut kb = input.parse::<Name>()?;
-                if kb.root == SymbolIndex::PUBLIC {
-                    kb.root = SymbolIndex::MOD;
+                    Ok(new_try_in(
+                        new_compound(IrCompoundKind::Struct, args),
+                        IrNode::Const(kb),
+                    ))
                 }
-
-                Ok(new_try_in(
-                    new_compound(IrCompoundKind::Struct, args),
-                    IrNode::Const(kb),
-                ))
+            } else {
+                let mut error = content.error("error parsing `in` expression");
+                error.combine(lookahead.error());
+                Err(error)
             }
         } else {
+            let mut args = Vector::<IrNode>::new();
+            while is_term_start(&input.lookahead1()) {
+                args.push_back(input.parse()?);
+            }
+
             Ok(new_compound(IrCompoundKind::Struct, args))
         }
     }

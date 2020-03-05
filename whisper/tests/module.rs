@@ -10,15 +10,15 @@ whisper::module! {
     fn list_module();
 
     fubar if
-        println "fubar" in *;
+        in(*) println "fubar";
 }
 
 whisper::module! {
     fn wrap_module();
 
     wrap if
-        println "wrap" in *,
-        fubar in list;
+        in(*) println "wrap",
+        in(list) fubar;
 }
 
 whisper::query! {
